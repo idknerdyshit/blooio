@@ -162,3 +162,151 @@ impl PhoneNumbers<'_, crate::BlockingClient> {
         self.client.send(BatchLookupPhoneNumbers { numbers })
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    // --- LookupPhoneNumber (GET) ---
+
+    #[test]
+    fn lookup_method_is_get() {
+        assert_eq!(LookupPhoneNumber::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn lookup_path() {
+        let op = LookupPhoneNumber {
+            number: "+15550001111".into(),
+        };
+        assert_eq!(op.path(), "/phone-numbers/lookup");
+    }
+
+    #[test]
+    fn lookup_query_contains_number() {
+        let op = LookupPhoneNumber {
+            number: "+15550001111".into(),
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0], ("number", "+15550001111".to_string()));
+    }
+
+    #[test]
+    fn lookup_body_is_none() {
+        let op = LookupPhoneNumber {
+            number: "+15550001111".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- LookupPhoneNumberPost (POST) ---
+
+    #[test]
+    fn lookup_post_method_is_post() {
+        assert_eq!(LookupPhoneNumberPost::METHOD, http::Method::POST);
+    }
+
+    #[test]
+    fn lookup_post_path() {
+        let op = LookupPhoneNumberPost {
+            number: "+15550001111".into(),
+        };
+        assert_eq!(op.path(), "/phone-numbers/lookup");
+    }
+
+    #[test]
+    fn lookup_post_query_empty() {
+        let op = LookupPhoneNumberPost {
+            number: "+15550001111".into(),
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn lookup_post_body_contains_number() {
+        let op = LookupPhoneNumberPost {
+            number: "+15550001111".into(),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "number": "+15550001111" }));
+    }
+
+    // --- BatchLookupPhoneNumbers (POST /phone-numbers/batch) ---
+
+    #[test]
+    fn batch_method_is_post() {
+        assert_eq!(BatchLookupPhoneNumbers::METHOD, http::Method::POST);
+    }
+
+    #[test]
+    fn batch_path() {
+        let op = BatchLookupPhoneNumbers {
+            numbers: vec!["+15550001111".into()],
+        };
+        assert_eq!(op.path(), "/phone-numbers/batch");
+    }
+
+    #[test]
+    fn batch_query_empty() {
+        let op = BatchLookupPhoneNumbers {
+            numbers: vec!["+15550001111".into()],
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn batch_body_single_number() {
+        let op = BatchLookupPhoneNumbers {
+            numbers: vec!["+15550001111".into()],
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "numbers": ["+15550001111"] }));
+    }
+
+    #[test]
+    fn batch_body_multiple_numbers() {
+        let op = BatchLookupPhoneNumbers {
+            numbers: vec!["+15550001111".into(), "+15550002222".into()],
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "numbers": ["+15550001111", "+15550002222"] })
+        );
+    }
+
+    #[test]
+    fn batch_body_empty_list() {
+        let op = BatchLookupPhoneNumbers { numbers: vec![] };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "numbers": [] }));
+    }
+
+    // Explicitly verify GET vs POST distinction for same path
+    #[test]
+    fn lookup_get_vs_post_same_path_different_methods() {
+        assert_ne!(LookupPhoneNumber::METHOD, LookupPhoneNumberPost::METHOD);
+        let get_op = LookupPhoneNumber {
+            number: "+15550001111".into(),
+        };
+        let post_op = LookupPhoneNumberPost {
+            number: "+15550001111".into(),
+        };
+        assert_eq!(get_op.path(), post_op.path());
+        assert_eq!(LookupPhoneNumber::METHOD, http::Method::GET);
+        assert_eq!(LookupPhoneNumberPost::METHOD, http::Method::POST);
+    }
+}

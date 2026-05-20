@@ -90,3 +90,55 @@ impl FaceTime<'_, crate::BlockingClient> {
         })
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    #[test]
+    fn call_facetime_method_is_post() {
+        assert_eq!(CallFaceTime::METHOD, http::Method::POST);
+    }
+
+    #[test]
+    fn call_facetime_path() {
+        let op = CallFaceTime {
+            handle: "abc123".into(),
+        };
+        assert_eq!(op.path(), "/facetime/calls");
+    }
+
+    #[test]
+    fn call_facetime_query_is_empty() {
+        let op = CallFaceTime {
+            handle: "abc123".into(),
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn call_facetime_headers_is_empty() {
+        let op = CallFaceTime {
+            handle: "abc123".into(),
+        };
+        assert!(op.headers().is_empty());
+    }
+
+    #[test]
+    fn call_facetime_body_serializes_handle() {
+        let op = CallFaceTime {
+            handle: "abc123".into(),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "handle": "abc123" }));
+    }
+}

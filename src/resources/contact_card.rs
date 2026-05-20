@@ -196,3 +196,142 @@ impl ContactCard<'_, crate::BlockingClient> {
         self.client.send(op)
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    // --- GetMyContactCard ---
+
+    #[test]
+    fn get_contact_card_method_is_get() {
+        assert_eq!(GetMyContactCard::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn get_contact_card_path() {
+        let op = GetMyContactCard {
+            number: "abc123".into(),
+        };
+        assert_eq!(op.path(), "/me/numbers/abc123/contact-card");
+    }
+
+    #[test]
+    fn get_contact_card_query_empty() {
+        let op = GetMyContactCard {
+            number: "abc123".into(),
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn get_contact_card_body_none() {
+        let op = GetMyContactCard {
+            number: "abc123".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- UpdateMyContactCard ---
+
+    #[test]
+    fn update_contact_card_method_is_put() {
+        assert_eq!(UpdateMyContactCard::METHOD, http::Method::PUT);
+    }
+
+    #[test]
+    fn update_contact_card_path() {
+        let op = UpdateMyContactCard::new("abc123");
+        assert_eq!(op.path(), "/me/numbers/abc123/contact-card");
+    }
+
+    #[test]
+    fn update_contact_card_body_minimal_empty_object() {
+        // No optional fields set → body should be `{}`
+        let op = UpdateMyContactCard::new("abc123");
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({}));
+    }
+
+    #[test]
+    fn update_contact_card_body_with_names() {
+        let op = UpdateMyContactCard::new("abc123")
+            .first_name("Alice")
+            .last_name("Smith");
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "first_name": "Alice", "last_name": "Smith" })
+        );
+    }
+
+    #[test]
+    fn update_contact_card_body_with_avatar() {
+        let op = UpdateMyContactCard::new("abc123").avatar("https://example.com/avatar.png");
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "avatar": "https://example.com/avatar.png" })
+        );
+    }
+
+    #[test]
+    fn update_contact_card_body_with_sharing() {
+        let sharing = ContactCardSharing {
+            enabled: Some(true),
+            audience: Some(1),
+            name_format: Some(2),
+        };
+        let op = UpdateMyContactCard::new("abc123").sharing(sharing);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "sharing": { "enabled": true, "audience": 1, "name_format": 2 }
+            })
+        );
+    }
+
+    #[test]
+    fn update_contact_card_body_all_fields() {
+        let sharing = ContactCardSharing {
+            enabled: Some(false),
+            audience: Some(0),
+            name_format: None,
+        };
+        let op = UpdateMyContactCard::new("num1")
+            .first_name("Bob")
+            .last_name("Jones")
+            .avatar("data:image/png;base64,abc")
+            .sharing(sharing);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "first_name": "Bob",
+                "last_name": "Jones",
+                "avatar": "data:image/png;base64,abc",
+                "sharing": { "enabled": false, "audience": 0 }
+            })
+        );
+    }
+
+    #[test]
+    fn update_contact_card_query_empty() {
+        let op = UpdateMyContactCard::new("abc123");
+        assert!(op.query().is_empty());
+    }
+}

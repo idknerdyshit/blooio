@@ -87,3 +87,41 @@ impl Numbers<'_, crate::BlockingClient> {
         self.client.send(ListNumbers)
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    #[test]
+    fn list_numbers_method_is_get() {
+        assert_eq!(ListNumbers::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn list_numbers_path() {
+        assert_eq!(ListNumbers.path(), "/me/numbers");
+    }
+
+    #[test]
+    fn list_numbers_query_is_empty() {
+        assert!(ListNumbers.query().is_empty());
+    }
+
+    #[test]
+    fn list_numbers_headers_is_empty() {
+        assert!(ListNumbers.headers().is_empty());
+    }
+
+    #[test]
+    fn list_numbers_body_is_none() {
+        assert!(ListNumbers.body().unwrap().is_none());
+    }
+}

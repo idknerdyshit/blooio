@@ -138,3 +138,109 @@ impl Location<'_, crate::BlockingClient> {
         self.client.send(RefreshLocationContacts)
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    // --- ListLocationContacts ---
+
+    #[test]
+    fn list_location_contacts_method_is_get() {
+        assert_eq!(ListLocationContacts::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn list_location_contacts_path() {
+        assert_eq!(ListLocationContacts.path(), "/location/contacts");
+    }
+
+    #[test]
+    fn list_location_contacts_query_is_empty() {
+        assert!(ListLocationContacts.query().is_empty());
+    }
+
+    #[test]
+    fn list_location_contacts_headers_is_empty() {
+        assert!(ListLocationContacts.headers().is_empty());
+    }
+
+    #[test]
+    fn list_location_contacts_body_is_none() {
+        assert!(ListLocationContacts.body().unwrap().is_none());
+    }
+
+    // --- GetLocationContact ---
+
+    #[test]
+    fn get_location_contact_method_is_get() {
+        assert_eq!(GetLocationContact::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn get_location_contact_path_interpolates_handle() {
+        let op = GetLocationContact {
+            handle: "abc123".into(),
+        };
+        assert_eq!(op.path(), "/location/contacts/abc123");
+    }
+
+    #[test]
+    fn get_location_contact_query_is_empty() {
+        let op = GetLocationContact {
+            handle: "abc123".into(),
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn get_location_contact_headers_is_empty() {
+        let op = GetLocationContact {
+            handle: "abc123".into(),
+        };
+        assert!(op.headers().is_empty());
+    }
+
+    #[test]
+    fn get_location_contact_body_is_none() {
+        let op = GetLocationContact {
+            handle: "abc123".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- RefreshLocationContacts ---
+
+    #[test]
+    fn refresh_location_contacts_method_is_post() {
+        assert_eq!(RefreshLocationContacts::METHOD, http::Method::POST);
+    }
+
+    #[test]
+    fn refresh_location_contacts_path() {
+        assert_eq!(RefreshLocationContacts.path(), "/location/contacts/refresh");
+    }
+
+    #[test]
+    fn refresh_location_contacts_query_is_empty() {
+        assert!(RefreshLocationContacts.query().is_empty());
+    }
+
+    #[test]
+    fn refresh_location_contacts_headers_is_empty() {
+        assert!(RefreshLocationContacts.headers().is_empty());
+    }
+
+    #[test]
+    fn refresh_location_contacts_body_is_none() {
+        assert!(RefreshLocationContacts.body().unwrap().is_none());
+    }
+}

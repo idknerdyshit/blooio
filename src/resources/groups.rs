@@ -580,3 +580,322 @@ impl<'c> GroupMembers<'c, crate::BlockingClient> {
         })
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    // --- ListGroups ---
+
+    #[test]
+    fn list_groups_method_and_path() {
+        assert_eq!(ListGroups::METHOD, http::Method::GET);
+        let op = ListGroups::default();
+        assert_eq!(op.path(), "/groups");
+    }
+
+    #[test]
+    fn list_groups_query_empty_when_no_options() {
+        let op = ListGroups::default();
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn list_groups_query_with_all_options() {
+        let op = ListGroups {
+            limit: Some(10),
+            offset: Some(20),
+            q: Some("test".into()),
+            sort: Some("asc".into()),
+        };
+        let q = op.query();
+        assert!(q.contains(&("limit", "10".into())));
+        assert!(q.contains(&("offset", "20".into())));
+        assert!(q.contains(&("q", "test".into())));
+        assert!(q.contains(&("sort", "asc".into())));
+        assert_eq!(q.len(), 4);
+    }
+
+    #[test]
+    fn list_groups_query_omits_unset_optionals() {
+        let op = ListGroups {
+            limit: Some(5),
+            offset: None,
+            q: None,
+            sort: None,
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 1);
+        assert!(q.contains(&("limit", "5".into())));
+    }
+
+    #[test]
+    fn list_groups_body_is_none() {
+        let op = ListGroups::default();
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- CreateGroup ---
+
+    #[test]
+    fn create_group_method_and_path() {
+        assert_eq!(CreateGroup::METHOD, http::Method::POST);
+        let op = CreateGroup {
+            name: "MyGroup".into(),
+            chat_guid: None,
+            members: None,
+        };
+        assert_eq!(op.path(), "/groups");
+    }
+
+    #[test]
+    fn create_group_body_minimal() {
+        let op = CreateGroup {
+            name: "MyGroup".into(),
+            chat_guid: None,
+            members: None,
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "name": "MyGroup" }));
+    }
+
+    #[test]
+    fn create_group_body_populated() {
+        let op = CreateGroup {
+            name: "MyGroup".into(),
+            chat_guid: Some("chat-abc".into()),
+            members: Some(vec!["m1".into(), "m2".into()]),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "name": "MyGroup",
+                "chat_guid": "chat-abc",
+                "members": ["m1", "m2"]
+            })
+        );
+    }
+
+    // --- GetGroup ---
+
+    #[test]
+    fn get_group_method_and_path() {
+        assert_eq!(GetGroup::METHOD, http::Method::GET);
+        let op = GetGroup {
+            group_id: "g1".into(),
+        };
+        assert_eq!(op.path(), "/groups/g1");
+    }
+
+    #[test]
+    fn get_group_query_and_body_empty() {
+        let op = GetGroup {
+            group_id: "g1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- UpdateGroup ---
+
+    #[test]
+    fn update_group_method_and_path() {
+        assert_eq!(UpdateGroup::METHOD, http::Method::PATCH);
+        let op = UpdateGroup {
+            group_id: "g1".into(),
+            name: None,
+        };
+        assert_eq!(op.path(), "/groups/g1");
+    }
+
+    #[test]
+    fn update_group_body_minimal_omits_name() {
+        let op = UpdateGroup {
+            group_id: "g1".into(),
+            name: None,
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({}));
+    }
+
+    #[test]
+    fn update_group_body_with_name() {
+        let op = UpdateGroup {
+            group_id: "g1".into(),
+            name: Some("Renamed".into()),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "name": "Renamed" }));
+    }
+
+    // --- DeleteGroup ---
+
+    #[test]
+    fn delete_group_method_and_path() {
+        assert_eq!(DeleteGroup::METHOD, http::Method::DELETE);
+        let op = DeleteGroup {
+            group_id: "g1".into(),
+        };
+        assert_eq!(op.path(), "/groups/g1");
+    }
+
+    #[test]
+    fn delete_group_query_and_body_empty() {
+        let op = DeleteGroup {
+            group_id: "g1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- SetGroupIcon ---
+
+    #[test]
+    fn set_group_icon_method_and_path() {
+        assert_eq!(SetGroupIcon::METHOD, http::Method::POST);
+        let op = SetGroupIcon {
+            group_id: "g1".into(),
+            icon: "https://example.com/icon.png".into(),
+        };
+        assert_eq!(op.path(), "/groups/g1/icon");
+    }
+
+    #[test]
+    fn set_group_icon_body() {
+        let op = SetGroupIcon {
+            group_id: "g1".into(),
+            icon: "https://example.com/icon.png".into(),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "icon": "https://example.com/icon.png" })
+        );
+    }
+
+    // --- RemoveGroupIcon ---
+
+    #[test]
+    fn remove_group_icon_method_and_path() {
+        assert_eq!(RemoveGroupIcon::METHOD, http::Method::DELETE);
+        let op = RemoveGroupIcon {
+            group_id: "g1".into(),
+        };
+        assert_eq!(op.path(), "/groups/g1/icon");
+    }
+
+    #[test]
+    fn remove_group_icon_query_and_body_empty() {
+        let op = RemoveGroupIcon {
+            group_id: "g1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- ListGroupMembers ---
+
+    #[test]
+    fn list_group_members_method_and_path() {
+        assert_eq!(ListGroupMembers::METHOD, http::Method::GET);
+        let op = ListGroupMembers {
+            group_id: "g1".into(),
+            limit: None,
+            offset: None,
+        };
+        assert_eq!(op.path(), "/groups/g1/members");
+    }
+
+    #[test]
+    fn list_group_members_query_empty_when_no_options() {
+        let op = ListGroupMembers {
+            group_id: "g1".into(),
+            limit: None,
+            offset: None,
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn list_group_members_query_with_options() {
+        let op = ListGroupMembers {
+            group_id: "g1".into(),
+            limit: Some(25),
+            offset: Some(50),
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 2);
+        assert!(q.contains(&("limit", "25".into())));
+        assert!(q.contains(&("offset", "50".into())));
+    }
+
+    #[test]
+    fn list_group_members_body_is_none() {
+        let op = ListGroupMembers {
+            group_id: "g1".into(),
+            limit: None,
+            offset: None,
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- AddGroupMember ---
+
+    #[test]
+    fn add_group_member_method_and_path() {
+        assert_eq!(AddGroupMember::METHOD, http::Method::POST);
+        let op = AddGroupMember {
+            group_id: "g1".into(),
+            contact_id: "m1".into(),
+        };
+        assert_eq!(op.path(), "/groups/g1/members");
+    }
+
+    #[test]
+    fn add_group_member_body() {
+        let op = AddGroupMember {
+            group_id: "g1".into(),
+            contact_id: "m1".into(),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // group_id is #[serde(skip)], only contact_id in body
+        assert_eq!(v, serde_json::json!({ "contact_id": "m1" }));
+    }
+
+    // --- RemoveGroupMember ---
+
+    #[test]
+    fn remove_group_member_method_and_path() {
+        assert_eq!(RemoveGroupMember::METHOD, http::Method::DELETE);
+        let op = RemoveGroupMember {
+            group_id: "g1".into(),
+            contact_id: "m1".into(),
+        };
+        assert_eq!(op.path(), "/groups/g1/members/m1");
+    }
+
+    #[test]
+    fn remove_group_member_query_and_body_empty() {
+        let op = RemoveGroupMember {
+            group_id: "g1".into(),
+            contact_id: "m1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+}

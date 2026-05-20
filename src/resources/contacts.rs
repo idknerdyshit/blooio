@@ -484,3 +484,362 @@ impl<'c> Contacts<'c, crate::BlockingClient> {
         })
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    // --- ListContacts ---
+
+    #[test]
+    fn list_contacts_method_is_get() {
+        assert_eq!(ListContacts::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn list_contacts_path() {
+        let op = ListContacts::default();
+        assert_eq!(op.path(), "/contacts");
+    }
+
+    #[test]
+    fn list_contacts_query_empty_when_no_filters() {
+        let op = ListContacts::default();
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn list_contacts_query_with_limit_and_offset() {
+        let op = ListContacts {
+            limit: Some(10),
+            offset: Some(20),
+            q: None,
+            sort: None,
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 2);
+        assert!(q.contains(&("limit", "10".to_string())));
+        assert!(q.contains(&("offset", "20".to_string())));
+    }
+
+    #[test]
+    fn list_contacts_query_with_all_fields() {
+        let op = ListContacts {
+            limit: Some(5),
+            offset: Some(0),
+            q: Some("alice".into()),
+            sort: Some("name".into()),
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 4);
+        assert!(q.contains(&("limit", "5".to_string())));
+        assert!(q.contains(&("offset", "0".to_string())));
+        assert!(q.contains(&("q", "alice".to_string())));
+        assert!(q.contains(&("sort", "name".to_string())));
+    }
+
+    #[test]
+    fn list_contacts_query_omits_unset_optionals() {
+        let op = ListContacts {
+            limit: Some(3),
+            offset: None,
+            q: None,
+            sort: None,
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0], ("limit", "3".to_string()));
+    }
+
+    #[test]
+    fn list_contacts_body_none() {
+        let op = ListContacts::default();
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- CreateContact ---
+
+    #[test]
+    fn create_contact_method_is_post() {
+        assert_eq!(CreateContact::METHOD, http::Method::POST);
+    }
+
+    #[test]
+    fn create_contact_path() {
+        let op = CreateContact {
+            identifier: "+15550001111".into(),
+            name: None,
+        };
+        assert_eq!(op.path(), "/contacts");
+    }
+
+    #[test]
+    fn create_contact_body_minimal_no_name() {
+        let op = CreateContact {
+            identifier: "+15550001111".into(),
+            name: None,
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "identifier": "+15550001111" }));
+    }
+
+    #[test]
+    fn create_contact_body_with_name() {
+        let op = CreateContact {
+            identifier: "+15550001111".into(),
+            name: Some("Alice".into()),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "identifier": "+15550001111", "name": "Alice" })
+        );
+    }
+
+    #[test]
+    fn create_contact_query_empty() {
+        let op = CreateContact {
+            identifier: "+15550001111".into(),
+            name: None,
+        };
+        assert!(op.query().is_empty());
+    }
+
+    // --- GetContact ---
+
+    #[test]
+    fn get_contact_method_is_get() {
+        assert_eq!(GetContact::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn get_contact_path() {
+        let op = GetContact {
+            contact_id: "abc123".into(),
+        };
+        assert_eq!(op.path(), "/contacts/abc123");
+    }
+
+    #[test]
+    fn get_contact_query_empty() {
+        let op = GetContact {
+            contact_id: "abc123".into(),
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn get_contact_body_none() {
+        let op = GetContact {
+            contact_id: "abc123".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- UpdateContact ---
+
+    #[test]
+    fn update_contact_method_is_patch() {
+        assert_eq!(UpdateContact::METHOD, http::Method::PATCH);
+    }
+
+    #[test]
+    fn update_contact_path() {
+        let op = UpdateContact {
+            contact_id: "abc123".into(),
+            name: None,
+        };
+        assert_eq!(op.path(), "/contacts/abc123");
+    }
+
+    #[test]
+    fn update_contact_body_no_name() {
+        let op = UpdateContact {
+            contact_id: "abc123".into(),
+            name: None,
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({}));
+    }
+
+    #[test]
+    fn update_contact_body_with_name() {
+        let op = UpdateContact {
+            contact_id: "abc123".into(),
+            name: Some("Bob".into()),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "name": "Bob" }));
+    }
+
+    #[test]
+    fn update_contact_query_empty() {
+        let op = UpdateContact {
+            contact_id: "abc123".into(),
+            name: None,
+        };
+        assert!(op.query().is_empty());
+    }
+
+    // --- DeleteContact ---
+
+    #[test]
+    fn delete_contact_method_is_delete() {
+        assert_eq!(DeleteContact::METHOD, http::Method::DELETE);
+    }
+
+    #[test]
+    fn delete_contact_path() {
+        let op = DeleteContact {
+            contact_id: "abc123".into(),
+        };
+        assert_eq!(op.path(), "/contacts/abc123");
+    }
+
+    #[test]
+    fn delete_contact_body_none() {
+        let op = DeleteContact {
+            contact_id: "abc123".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- GetContactCapabilities ---
+
+    #[test]
+    fn get_capabilities_method_is_get() {
+        assert_eq!(GetContactCapabilities::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn get_capabilities_path() {
+        let op = GetContactCapabilities {
+            contact_id: "abc123".into(),
+        };
+        assert_eq!(op.path(), "/contacts/abc123/capabilities");
+    }
+
+    #[test]
+    fn get_capabilities_body_none() {
+        let op = GetContactCapabilities {
+            contact_id: "abc123".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- ListContactTags ---
+
+    #[test]
+    fn list_tags_method_is_get() {
+        assert_eq!(ListContactTags::METHOD, http::Method::GET);
+    }
+
+    #[test]
+    fn list_tags_path() {
+        let op = ListContactTags {
+            contact_id: "abc123".into(),
+        };
+        assert_eq!(op.path(), "/contacts/abc123/tags");
+    }
+
+    #[test]
+    fn list_tags_body_none() {
+        let op = ListContactTags {
+            contact_id: "abc123".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- AddContactTags ---
+
+    #[test]
+    fn add_tags_method_is_post() {
+        assert_eq!(AddContactTags::METHOD, http::Method::POST);
+    }
+
+    #[test]
+    fn add_tags_path() {
+        let op = AddContactTags {
+            contact_id: "abc123".into(),
+            tags: vec!["vip".into()],
+        };
+        assert_eq!(op.path(), "/contacts/abc123/tags");
+    }
+
+    #[test]
+    fn add_tags_body_single_tag() {
+        let op = AddContactTags {
+            contact_id: "abc123".into(),
+            tags: vec!["vip".into()],
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "tags": ["vip"] }));
+    }
+
+    #[test]
+    fn add_tags_body_multiple_tags() {
+        let op = AddContactTags {
+            contact_id: "abc123".into(),
+            tags: vec!["vip".into(), "priority".into()],
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "tags": ["vip", "priority"] }));
+    }
+
+    #[test]
+    fn add_tags_query_empty() {
+        let op = AddContactTags {
+            contact_id: "abc123".into(),
+            tags: vec!["vip".into()],
+        };
+        assert!(op.query().is_empty());
+    }
+
+    // --- RemoveContactTag ---
+
+    #[test]
+    fn remove_tag_method_is_delete() {
+        assert_eq!(RemoveContactTag::METHOD, http::Method::DELETE);
+    }
+
+    #[test]
+    fn remove_tag_path() {
+        let op = RemoveContactTag {
+            contact_id: "abc123".into(),
+            tag: "vip".into(),
+        };
+        assert_eq!(op.path(), "/contacts/abc123/tags/vip");
+    }
+
+    #[test]
+    fn remove_tag_body_none() {
+        let op = RemoveContactTag {
+            contact_id: "abc123".into(),
+            tag: "vip".into(),
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    #[test]
+    fn remove_tag_query_empty() {
+        let op = RemoveContactTag {
+            contact_id: "abc123".into(),
+            tag: "vip".into(),
+        };
+        assert!(op.query().is_empty());
+    }
+}

@@ -552,3 +552,311 @@ impl<'c> WebhookLogs<'c, crate::BlockingClient> {
         })
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+    use crate::core::operation::Operation;
+
+    // --- ListWebhooks ---
+
+    #[test]
+    fn list_webhooks_method_and_path() {
+        assert_eq!(ListWebhooks::METHOD, http::Method::GET);
+        let op = ListWebhooks;
+        assert_eq!(op.path(), "/webhooks");
+    }
+
+    #[test]
+    fn list_webhooks_query_and_body_empty() {
+        let op = ListWebhooks;
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- CreateWebhook ---
+
+    #[test]
+    fn create_webhook_method_and_path() {
+        assert_eq!(CreateWebhook::METHOD, http::Method::POST);
+        let op = CreateWebhook {
+            webhook_url: "https://example.com/hook".into(),
+            webhook_type: None,
+            valid_until: None,
+        };
+        assert_eq!(op.path(), "/webhooks");
+    }
+
+    #[test]
+    fn create_webhook_body_minimal() {
+        let op = CreateWebhook {
+            webhook_url: "https://example.com/hook".into(),
+            webhook_type: None,
+            valid_until: None,
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "webhook_url": "https://example.com/hook" })
+        );
+    }
+
+    #[test]
+    fn create_webhook_body_populated() {
+        let op = CreateWebhook {
+            webhook_url: "https://example.com/hook".into(),
+            webhook_type: Some("all".into()),
+            valid_until: Some(1893456000),
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "webhook_url": "https://example.com/hook",
+                "webhook_type": "all",
+                "valid_until": 1893456000_i64
+            })
+        );
+    }
+
+    // --- GetWebhook ---
+
+    #[test]
+    fn get_webhook_method_and_path() {
+        assert_eq!(GetWebhook::METHOD, http::Method::GET);
+        let op = GetWebhook {
+            webhook_id: "wh1".into(),
+        };
+        assert_eq!(op.path(), "/webhooks/wh1");
+    }
+
+    #[test]
+    fn get_webhook_query_and_body_empty() {
+        let op = GetWebhook {
+            webhook_id: "wh1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- UpdateWebhook builder ---
+
+    #[test]
+    fn update_webhook_method_and_path() {
+        assert_eq!(UpdateWebhook::METHOD, http::Method::PATCH);
+        let op = UpdateWebhook::new("wh1");
+        assert_eq!(op.path(), "/webhooks/wh1");
+    }
+
+    #[test]
+    fn update_webhook_body_minimal_all_none() {
+        let op = UpdateWebhook::new("wh1");
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // All optional fields absent → empty object; webhook_id is #[serde(skip)]
+        assert_eq!(v, serde_json::json!({}));
+    }
+
+    #[test]
+    fn update_webhook_body_with_webhook_type() {
+        let op = UpdateWebhook::new("wh1").webhook_type("message");
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "webhook_type": "message" }));
+    }
+
+    #[test]
+    fn update_webhook_body_with_valid_until() {
+        let op = UpdateWebhook::new("wh1").valid_until(1893456000);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "valid_until": 1893456000_i64 }));
+    }
+
+    #[test]
+    fn update_webhook_body_deprecate() {
+        let op = UpdateWebhook::new("wh1").deprecate(true);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "deprecate": true }));
+    }
+
+    #[test]
+    fn update_webhook_body_fully_populated() {
+        let op = UpdateWebhook::new("wh1")
+            .webhook_type("all")
+            .valid_until(1893456000)
+            .deprecate(false);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "webhook_type": "all",
+                "valid_until": 1893456000_i64,
+                "deprecate": false
+            })
+        );
+    }
+
+    #[test]
+    fn update_webhook_webhook_id_not_in_body() {
+        let op = UpdateWebhook::new("wh1").webhook_type("all");
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(v.get("webhook_id").is_none());
+    }
+
+    // --- DeleteWebhook ---
+
+    #[test]
+    fn delete_webhook_method_and_path() {
+        assert_eq!(DeleteWebhook::METHOD, http::Method::DELETE);
+        let op = DeleteWebhook {
+            webhook_id: "wh1".into(),
+        };
+        assert_eq!(op.path(), "/webhooks/wh1");
+    }
+
+    #[test]
+    fn delete_webhook_query_and_body_empty() {
+        let op = DeleteWebhook {
+            webhook_id: "wh1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- RotateWebhookSecret ---
+
+    #[test]
+    fn rotate_webhook_secret_method_and_path() {
+        assert_eq!(RotateWebhookSecret::METHOD, http::Method::POST);
+        let op = RotateWebhookSecret {
+            webhook_id: "wh1".into(),
+        };
+        assert_eq!(op.path(), "/webhooks/wh1/secret/rotate");
+    }
+
+    #[test]
+    fn rotate_webhook_secret_query_and_body_empty() {
+        let op = RotateWebhookSecret {
+            webhook_id: "wh1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- ListWebhookLogs ---
+
+    #[test]
+    fn list_webhook_logs_method_and_path() {
+        assert_eq!(ListWebhookLogs::METHOD, http::Method::GET);
+        let op = ListWebhookLogs {
+            webhook_id: "wh1".into(),
+            limit: None,
+            offset: None,
+            sort: None,
+            status: None,
+            min_status: None,
+            max_status: None,
+        };
+        assert_eq!(op.path(), "/webhooks/wh1/logs");
+    }
+
+    #[test]
+    fn list_webhook_logs_query_empty_when_no_options() {
+        let op = ListWebhookLogs {
+            webhook_id: "wh1".into(),
+            limit: None,
+            offset: None,
+            sort: None,
+            status: None,
+            min_status: None,
+            max_status: None,
+        };
+        assert!(op.query().is_empty());
+    }
+
+    #[test]
+    fn list_webhook_logs_query_with_all_options() {
+        let op = ListWebhookLogs {
+            webhook_id: "wh1".into(),
+            limit: Some(10),
+            offset: Some(5),
+            sort: Some("desc".into()),
+            status: Some(200),
+            min_status: Some(200),
+            max_status: Some(299),
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 6);
+        assert!(q.contains(&("limit", "10".into())));
+        assert!(q.contains(&("offset", "5".into())));
+        assert!(q.contains(&("sort", "desc".into())));
+        assert!(q.contains(&("status", "200".into())));
+        assert!(q.contains(&("min_status", "200".into())));
+        assert!(q.contains(&("max_status", "299".into())));
+    }
+
+    #[test]
+    fn list_webhook_logs_query_omits_unset_optionals() {
+        let op = ListWebhookLogs {
+            webhook_id: "wh1".into(),
+            limit: Some(20),
+            offset: None,
+            sort: None,
+            status: None,
+            min_status: None,
+            max_status: None,
+        };
+        let q = op.query();
+        assert_eq!(q.len(), 1);
+        assert!(q.contains(&("limit", "20".into())));
+    }
+
+    #[test]
+    fn list_webhook_logs_body_is_none() {
+        let op = ListWebhookLogs {
+            webhook_id: "wh1".into(),
+            limit: None,
+            offset: None,
+            sort: None,
+            status: None,
+            min_status: None,
+            max_status: None,
+        };
+        assert!(op.body().unwrap().is_none());
+    }
+
+    // --- ReplayWebhookEvent ---
+
+    #[test]
+    fn replay_webhook_event_method_and_path() {
+        assert_eq!(ReplayWebhookEvent::METHOD, http::Method::POST);
+        let op = ReplayWebhookEvent {
+            webhook_id: "wh1".into(),
+            event_id: "evt1".into(),
+        };
+        assert_eq!(op.path(), "/webhooks/wh1/logs/evt1/replay");
+    }
+
+    #[test]
+    fn replay_webhook_event_query_and_body_empty() {
+        let op = ReplayWebhookEvent {
+            webhook_id: "wh1".into(),
+            event_id: "evt1".into(),
+        };
+        assert!(op.query().is_empty());
+        assert!(op.body().unwrap().is_none());
+    }
+}
