@@ -1,6 +1,7 @@
 //! Offset/limit pagination helpers.
 
 use std::marker::PhantomData;
+use std::num::NonZeroU32;
 
 use serde::Deserialize;
 
@@ -33,21 +34,24 @@ pub trait Listing {
     fn into_page(self) -> Page<Self::Item>;
 }
 
-/// Default page size used by the `*_all` paginator helpers.
-pub const DEFAULT_PAGE_SIZE: u32 = 50;
+/// Default page size used by the `*_all` paginator helpers (50).
+pub const DEFAULT_PAGE_SIZE: NonZeroU32 = match NonZeroU32::new(50) {
+    Some(n) => n,
+    None => unreachable!(),
+};
 
 /// Shared offset-stepping state and stop logic for both paginators.
 struct Cursor {
     offset: u32,
-    limit: u32,
+    limit: NonZeroU32,
     done: bool,
 }
 
 impl Cursor {
-    fn new(limit: u32) -> Self {
+    fn new(limit: NonZeroU32) -> Self {
         Cursor {
             offset: 0,
-            limit: limit.max(1),
+            limit,
             done: false,
         }
     }
@@ -61,7 +65,7 @@ impl Cursor {
             .as_ref()
             .and_then(|p| p.total)
             .is_some_and(|total| i64::from(self.offset) >= total);
-        if got < self.limit || got == 0 || reached_total {
+        if got < self.limit.get() || got == 0 || reached_total {
             self.done = true;
         }
         page.items
@@ -102,7 +106,7 @@ where
     O: Operation,
     O::Output: Listing,
 {
-    pub(crate) fn new(client: &'c C, limit: u32, make: F) -> Self {
+    pub(crate) fn new(client: &'c C, limit: NonZeroU32, make: F) -> Self {
         Paginator {
             client,
             make,
@@ -124,7 +128,7 @@ where
         if self.cursor.done {
             return None;
         }
-        let op = (self.make)(self.cursor.offset, self.cursor.limit);
+        let op = (self.make)(self.cursor.offset, self.cursor.limit.get());
         match self.client.send(op).await {
             Ok(out) => Some(Ok(self.cursor.advance(out.into_page()))),
             Err(e) => {
@@ -156,7 +160,7 @@ where
         if self.cursor.done {
             return None;
         }
-        let op = (self.make)(self.cursor.offset, self.cursor.limit);
+        let op = (self.make)(self.cursor.offset, self.cursor.limit.get());
         match self.client.send(op) {
             Ok(out) => Some(Ok(self.cursor.advance(out.into_page()))),
             Err(e) => {
@@ -201,9 +205,14 @@ where
 mod tests {
     use super::*;
 
+    /// Build a `NonZeroU32` page size for tests.
+    fn nz(n: u32) -> NonZeroU32 {
+        NonZeroU32::new(n).unwrap()
+    }
+
     #[test]
     fn cursor_stops_on_short_page() {
-        let mut c = Cursor::new(50);
+        let mut c = Cursor::new(nz(50));
         let page = Page {
             items: vec![1, 2, 3],
             pagination: Some(Pagination {
@@ -220,7 +229,7 @@ mod tests {
 
     #[test]
     fn cursor_continues_on_full_page() {
-        let mut c = Cursor::new(2);
+        let mut c = Cursor::new(nz(2));
         let page = Page {
             items: vec![1, 2],
             pagination: Some(Pagination {
@@ -236,7 +245,7 @@ mod tests {
 
     #[test]
     fn cursor_stops_when_total_reached_even_on_full_page() {
-        let mut c = Cursor::new(2);
+        let mut c = Cursor::new(nz(2));
         let page = Page {
             items: vec![1, 2],
             pagination: Some(Pagination {
@@ -254,7 +263,7 @@ mod tests {
         // No `pagination` metadata: a full page must keep the cursor live so the
         // next page is fetched. (Termination then relies on a later short/empty
         // page, exercised by the two tests below.)
-        let mut c = Cursor::new(2);
+        let mut c = Cursor::new(nz(2));
         let page = Page {
             items: vec![1, 2],
             pagination: None,
@@ -267,7 +276,7 @@ mod tests {
     #[test]
     fn cursor_stops_on_short_page_without_pagination() {
         // A short page (got < limit) is the terminator when no `total` is given.
-        let mut c = Cursor::new(50);
+        let mut c = Cursor::new(nz(50));
         let page = Page {
             items: vec![1, 2, 3],
             pagination: None,
@@ -281,7 +290,7 @@ mod tests {
     fn cursor_stops_on_empty_page() {
         // An empty page always terminates, even at a full-limit offset boundary
         // with no pagination metadata. This is the guard against runaway loops.
-        let mut c = Cursor::new(2);
+        let mut c = Cursor::new(nz(2));
         let page: Page<i32> = Page {
             items: vec![],
             pagination: None,
