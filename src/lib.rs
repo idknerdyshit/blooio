@@ -56,12 +56,12 @@ pub mod webhook;
 mod client;
 
 pub use config::{ClientConfig, DEFAULT_BASE_URL};
-pub use core::{Listing, Operation, Page, Paginator, Pagination};
+pub use core::{Listing, Operation, Page, Pagination, Paginator};
 pub use error::{Error, Result};
 pub use secret::Secret;
 pub use types::*;
 
-#[cfg(feature = "async")]
-pub use client::Client;
 #[cfg(feature = "sync")]
 pub use client::BlockingClient;
+#[cfg(feature = "async")]
+pub use client::Client;

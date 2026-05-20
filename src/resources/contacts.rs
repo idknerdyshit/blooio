@@ -3,8 +3,8 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{json_body, push_opt, Operation};
-use crate::core::pagination::{Listing, Page, Pagination, Paginator, DEFAULT_PAGE_SIZE};
+use crate::core::operation::{Operation, json_body, push_opt};
+use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{Contact, DeleteResponse};
 
@@ -289,10 +289,12 @@ impl<'c> Contacts<'c, crate::Client> {
     pub fn list_all(
         &self,
     ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListContacts, ListContacts> {
-        Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListContacts {
-            offset: Some(offset),
-            limit: Some(limit),
-            ..Default::default()
+        Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| {
+            ListContacts {
+                offset: Some(offset),
+                limit: Some(limit),
+                ..Default::default()
+            }
         })
     }
 
@@ -343,10 +345,7 @@ impl<'c> Contacts<'c, crate::Client> {
     }
 
     /// Get a contact's reachability capabilities.
-    pub async fn capabilities(
-        &self,
-        contact_id: impl Into<String>,
-    ) -> Result<ContactCapabilities> {
+    pub async fn capabilities(&self, contact_id: impl Into<String>) -> Result<ContactCapabilities> {
         self.client
             .send(GetContactCapabilities {
                 contact_id: contact_id.into(),
@@ -408,10 +407,12 @@ impl<'c> Contacts<'c, crate::BlockingClient> {
     pub fn list_all(
         &self,
     ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListContacts, ListContacts> {
-        Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListContacts {
-            offset: Some(offset),
-            limit: Some(limit),
-            ..Default::default()
+        Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| {
+            ListContacts {
+                offset: Some(offset),
+                limit: Some(limit),
+                ..Default::default()
+            }
         })
     }
 

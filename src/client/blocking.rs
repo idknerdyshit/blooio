@@ -50,12 +50,19 @@ impl BlockingClient {
         &self.config
     }
 
-    fn apply<B>(&self, mut rb: ureq::RequestBuilder<B>, spec: &RequestSpec) -> ureq::RequestBuilder<B> {
+    fn apply<B>(
+        &self,
+        mut rb: ureq::RequestBuilder<B>,
+        spec: &RequestSpec,
+    ) -> ureq::RequestBuilder<B> {
         for (k, v) in &spec.query {
             rb = rb.query(*k, v);
         }
         // API key exposed only to build the header; never logged.
-        rb = rb.header("Authorization", &format!("Bearer {}", self.config.api_key.expose()));
+        rb = rb.header(
+            "Authorization",
+            &format!("Bearer {}", self.config.api_key.expose()),
+        );
         rb = rb.header("User-Agent", &self.config.user_agent);
         for (k, v) in &spec.headers {
             rb = rb.header(*k, v);
@@ -112,7 +119,9 @@ impl BlockingClient {
             if (200..300).contains(&status) {
                 tracing::debug!("request completed");
             } else {
-                let code = crate::core::response::map_error(status, &bytes).code().map(str::to_owned);
+                let code = crate::core::response::map_error(status, &bytes)
+                    .code()
+                    .map(str::to_owned);
                 tracing::warn!(code = ?code, "request failed");
             }
         }

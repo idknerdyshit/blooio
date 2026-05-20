@@ -26,15 +26,17 @@ pub fn parse<T: DeserializeOwned>(status: u16, bytes: &[u8]) -> Result<T> {
 
 /// Map a non-2xx response body to [`Error::Api`].
 pub fn map_error(status: u16, bytes: &[u8]) -> Error {
-    if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) { Error::Api {
-        status,
-        code: body.code,
-        message: body
-            .message
-            .or(body.error.clone())
-            .unwrap_or_else(|| format!("HTTP {status}")),
-        error: body.error,
-    } } else {
+    if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
+        Error::Api {
+            status,
+            code: body.code,
+            message: body
+                .message
+                .or(body.error.clone())
+                .unwrap_or_else(|| format!("HTTP {status}")),
+            error: body.error,
+        }
+    } else {
         // Body wasn't the documented error schema. Fall back to the raw
         // text, truncated to keep the message bounded.
         let raw = String::from_utf8_lossy(bytes);
@@ -54,7 +56,13 @@ pub fn map_error(status: u16, bytes: &[u8]) -> Error {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::print_stdout, clippy::unreadable_literal)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
 mod tests {
     use super::*;
     use serde::Deserialize;

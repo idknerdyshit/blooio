@@ -5,7 +5,14 @@
 //! headers are sent.
 
 #![cfg(feature = "async")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unused_async, clippy::print_stdout, clippy::unreadable_literal)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unused_async,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
 
 use blooio::{Client, ClientConfig};
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
@@ -68,7 +75,9 @@ async fn post_sends_json_body_and_content_type() {
     Mock::given(method("POST"))
         .and(path("/contacts"))
         .and(header("content-type", "application/json"))
-        .and(body_json(serde_json::json!({ "identifier": "+15551234567" })))
+        .and(body_json(
+            serde_json::json!({ "identifier": "+15551234567" }),
+        ))
         .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
             "id": "c2",
             "identifier": "+15551234567"

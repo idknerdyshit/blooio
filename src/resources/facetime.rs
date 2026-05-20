@@ -3,7 +3,7 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{json_body, Operation};
+use crate::core::operation::{Operation, json_body};
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------

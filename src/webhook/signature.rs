@@ -129,7 +129,13 @@ pub fn verify_at(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::print_stdout, clippy::unreadable_literal)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
 mod tests {
     use super::*;
 

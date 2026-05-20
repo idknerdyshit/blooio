@@ -2,7 +2,13 @@
 //! in any captured tracing span/event.
 
 #![cfg(all(feature = "tracing", feature = "async"))]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::print_stdout, clippy::unreadable_literal)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -62,7 +68,9 @@ async fn tracing_never_emits_the_key() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/me"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "valid": true })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "valid": true })),
+        )
         .mount(&server)
         .await;
 
@@ -72,8 +80,17 @@ async fn tracing_never_emits_the_key() {
 
     let captured = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
     // We did emit a request span/event...
-    assert!(captured.contains("blooio.request"), "expected request span to be traced");
+    assert!(
+        captured.contains("blooio.request"),
+        "expected request span to be traced"
+    );
     // ...but never the secret or the Authorization header value.
-    assert!(!captured.contains(SECRET_KEY), "API key leaked into tracing output:\n{captured}");
-    assert!(!captured.to_lowercase().contains("bearer "), "Authorization header leaked into tracing");
+    assert!(
+        !captured.contains(SECRET_KEY),
+        "API key leaked into tracing output:\n{captured}"
+    );
+    assert!(
+        !captured.to_lowercase().contains("bearer "),
+        "Authorization header leaked into tracing"
+    );
 }

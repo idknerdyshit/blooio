@@ -7,6 +7,6 @@ pub mod pagination;
 pub mod request;
 pub mod response;
 
-pub use operation::{json_body, Operation};
-pub use pagination::{Page, Paginator, Pagination, Listing, DEFAULT_PAGE_SIZE};
+pub use operation::{Operation, json_body};
+pub use pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 pub use request::RequestSpec;

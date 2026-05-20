@@ -5,8 +5,8 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{json_body, push_opt, Operation};
-use crate::core::pagination::{Listing, Page, Pagination, Paginator, DEFAULT_PAGE_SIZE};
+use crate::core::operation::{Operation, json_body, push_opt};
+use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{
     Chat, ChatBackgroundResponse, ChatDetail, Json, LinkPreview, Message, MessageDetail,
@@ -891,14 +891,12 @@ impl<'c> Chat_<'c, crate::BlockingClient> {
 
     /// List this chat's messages (first page).
     pub fn list_messages(&self) -> Result<ListChatMessagesResponse> {
-        self.client.send(ListChatMessages::new(self.chat_id.clone()))
+        self.client
+            .send(ListChatMessages::new(self.chat_id.clone()))
     }
 
     /// List messages with explicit filters.
-    pub fn list_messages_with(
-        &self,
-        query: ListChatMessages,
-    ) -> Result<ListChatMessagesResponse> {
+    pub fn list_messages_with(&self, query: ListChatMessages) -> Result<ListChatMessagesResponse> {
         self.client.send(query)
     }
 
@@ -1036,7 +1034,13 @@ impl<'c> Chat_<'c, crate::BlockingClient> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::print_stdout, clippy::unreadable_literal)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
 mod tests {
     use super::*;
     use crate::core::operation::Operation;
@@ -1061,7 +1065,9 @@ mod tests {
 
     #[test]
     fn explicit_idempotency_key_is_used() {
-        let msg = SendMessage::new("chat1").text("hi").idempotency_key("my-key");
+        let msg = SendMessage::new("chat1")
+            .text("hi")
+            .idempotency_key("my-key");
         assert_eq!(msg.headers()[0].1, "my-key");
     }
 

@@ -1,7 +1,13 @@
 //! Mock-server integration tests for the blocking client (httpmock).
 
 #![cfg(feature = "sync")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::print_stdout, clippy::unreadable_literal)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
 
 use blooio::{BlockingClient, ClientConfig};
 use httpmock::prelude::*;

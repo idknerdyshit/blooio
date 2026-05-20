@@ -3,8 +3,8 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{json_body, push_opt, Operation};
-use crate::core::pagination::{Listing, Page, Pagination, Paginator, DEFAULT_PAGE_SIZE};
+use crate::core::operation::{Operation, json_body, push_opt};
+use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{Webhook, WebhookLog};
 
@@ -528,12 +528,8 @@ impl<'c> WebhookLogs<'c, crate::BlockingClient> {
     /// A paginator over all logs for this webhook.
     pub fn list_all(
         &self,
-    ) -> Paginator<
-        'c,
-        crate::BlockingClient,
-        impl Fn(u32, u32) -> ListWebhookLogs,
-        ListWebhookLogs,
-    > {
+    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListWebhookLogs, ListWebhookLogs>
+    {
         let webhook_id = self.webhook_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListWebhookLogs {

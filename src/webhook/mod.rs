@@ -6,7 +6,7 @@
 
 pub mod signature;
 
-pub use signature::{verify, verify_default, verify_at, VerifyError, DEFAULT_TOLERANCE_SECS};
+pub use signature::{DEFAULT_TOLERANCE_SECS, VerifyError, verify, verify_at, verify_default};
 
 use crate::error::{Error, Result};
 pub use crate::types::WebhookEventPayload;
@@ -71,7 +71,13 @@ impl WebhookEvent {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::print_stdout, clippy::unreadable_literal)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
 mod tests {
     use super::*;
 

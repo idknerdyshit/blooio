@@ -67,7 +67,10 @@ impl Client {
         }
         // The API key is exposed only here, to build the header. It is never
         // passed to a logging macro.
-        req = req.header(AUTHORIZATION, format!("Bearer {}", self.config.api_key.expose()));
+        req = req.header(
+            AUTHORIZATION,
+            format!("Bearer {}", self.config.api_key.expose()),
+        );
         for (k, v) in &spec.headers {
             req = req.header(*k, v);
         }
@@ -90,7 +93,9 @@ impl Client {
             if (200..300).contains(&status) {
                 tracing::debug!("request completed");
             } else {
-                let code = crate::core::response::map_error(status, &bytes).code().map(str::to_owned);
+                let code = crate::core::response::map_error(status, &bytes)
+                    .code()
+                    .map(str::to_owned);
                 tracing::warn!(code = ?code, "request failed");
             }
         }

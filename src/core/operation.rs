@@ -41,9 +41,7 @@ pub trait Operation {
 /// Helper for `Operation::body` implementations: serialize a value to JSON
 /// bytes, mapping failures to [`Error::Encode`].
 pub fn json_body<T: serde::Serialize>(value: &T) -> Result<Option<Vec<u8>>> {
-    serde_json::to_vec(value)
-        .map(Some)
-        .map_err(Error::encode)
+    serde_json::to_vec(value).map(Some).map_err(Error::encode)
 }
 
 /// Helper for `Operation::query` implementations: push a `(key, value)` pair
