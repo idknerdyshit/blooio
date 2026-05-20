@@ -98,10 +98,7 @@ impl RetryPolicy {
     /// Exponential backoff for the `n`-th retry (0-based), with optional jitter.
     fn backoff(&self, n: u32) -> Duration {
         let factor = 2u32.saturating_pow(n);
-        let raw = self
-            .base_delay
-            .saturating_mul(factor)
-            .min(self.max_delay);
+        let raw = self.base_delay.saturating_mul(factor).min(self.max_delay);
         if self.jitter {
             let frac = jitter_fraction();
             raw.mul_f64(frac)
@@ -192,9 +189,18 @@ mod tests {
             .with_jitter(false)
             .with_base_delay(Duration::from_millis(100))
             .with_max_delay(Duration::from_secs(1));
-        assert_eq!(p.delay_for(0, &api_err(503, None)), Duration::from_millis(100));
-        assert_eq!(p.delay_for(1, &api_err(503, None)), Duration::from_millis(200));
-        assert_eq!(p.delay_for(2, &api_err(503, None)), Duration::from_millis(400));
+        assert_eq!(
+            p.delay_for(0, &api_err(503, None)),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            p.delay_for(1, &api_err(503, None)),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            p.delay_for(2, &api_err(503, None)),
+            Duration::from_millis(400)
+        );
         // 100ms * 2^4 = 1600ms, clamped to the 1s ceiling.
         assert_eq!(p.delay_for(4, &api_err(503, None)), Duration::from_secs(1));
     }
@@ -208,7 +214,10 @@ mod tests {
         for _ in 0..1000 {
             let d = p.delay_for(1, &api_err(503, None));
             // raw for n=1 is 200ms; jittered must land in [0, 200ms].
-            assert!(d <= Duration::from_millis(200), "jitter exceeded raw: {d:?}");
+            assert!(
+                d <= Duration::from_millis(200),
+                "jitter exceeded raw: {d:?}"
+            );
         }
     }
 }

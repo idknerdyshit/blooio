@@ -305,7 +305,8 @@ impl<'c> Contacts<'c, crate::Client> {
     /// A paginator over all contacts.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListContacts + use<'c>, ListContacts> {
+    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListContacts + use<'c>, ListContacts>
+    {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| {
             ListContacts {
                 offset: Some(offset),
@@ -414,7 +415,12 @@ impl<'c> Contacts<'c, crate::BlockingClient> {
     /// A paginator over all contacts.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListContacts + use<'c>, ListContacts> {
+    ) -> Paginator<
+        'c,
+        crate::BlockingClient,
+        impl Fn(u32, u32) -> ListContacts + use<'c>,
+        ListContacts,
+    > {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| {
             ListContacts {
                 offset: Some(offset),

@@ -432,7 +432,8 @@ impl<'c> Groups<'c, crate::BlockingClient> {
     /// A paginator over all groups.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListGroups + use<'c>, ListGroups> {
+    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListGroups + use<'c>, ListGroups>
+    {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListGroups {
             offset: Some(offset),
             limit: Some(limit),
@@ -511,7 +512,12 @@ impl<'c> GroupMembers<'c, crate::Client> {
     /// A paginator over all members of this group.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListGroupMembers + use<'c>, ListGroupMembers> {
+    ) -> Paginator<
+        'c,
+        crate::Client,
+        impl Fn(u32, u32) -> ListGroupMembers + use<'c>,
+        ListGroupMembers,
+    > {
         let group_id = self.group_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListGroupMembers {
@@ -557,8 +563,12 @@ impl<'c> GroupMembers<'c, crate::BlockingClient> {
     /// A paginator over all members of this group.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListGroupMembers + use<'c>, ListGroupMembers>
-    {
+    ) -> Paginator<
+        'c,
+        crate::BlockingClient,
+        impl Fn(u32, u32) -> ListGroupMembers + use<'c>,
+        ListGroupMembers,
+    > {
         let group_id = self.group_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListGroupMembers {

@@ -52,8 +52,7 @@ where
 
 impl IntoResponse for WebhookRejection {
     fn into_response(self) -> Response {
-        let status =
-            StatusCode::from_u16(self.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
+        let status = StatusCode::from_u16(self.status_code()).unwrap_or(StatusCode::BAD_REQUEST);
         (status, self.to_string()).into_response()
     }
 }

@@ -9,8 +9,8 @@ use std::borrow::Cow;
 
 use crate::error::Error;
 use crate::secret::Secret;
-use crate::webhook::signature::{self, DEFAULT_TOLERANCE_SECS, VerifyError};
 use crate::webhook::WebhookEvent;
+use crate::webhook::signature::{self, DEFAULT_TOLERANCE_SECS, VerifyError};
 
 /// Default header name carrying the `t=…,v1=…` signature.
 pub const DEFAULT_SIGNATURE_HEADER: &str = "Blooio-Signature";
@@ -156,7 +156,10 @@ mod tests {
         mac.update(timestamp.to_string().as_bytes());
         mac.update(b".");
         mac.update(body);
-        format!("t={timestamp},v1={}", hex::encode(mac.finalize().into_bytes()))
+        format!(
+            "t={timestamp},v1={}",
+            hex::encode(mac.finalize().into_bytes())
+        )
     }
 
     #[test]
@@ -190,7 +193,10 @@ mod tests {
 
     #[test]
     fn default_header_name_is_blooio_signature() {
-        assert_eq!(WebhookVerifier::new(SECRET).header_name(), "Blooio-Signature");
+        assert_eq!(
+            WebhookVerifier::new(SECRET).header_name(),
+            "Blooio-Signature"
+        );
         assert_eq!(
             WebhookVerifier::new(SECRET)
                 .with_header_name("X-Sig")

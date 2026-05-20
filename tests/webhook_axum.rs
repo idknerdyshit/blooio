@@ -5,10 +5,10 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::routing::post;
-use axum::Router;
 use blooio::webhook::{VerifiedWebhook, WebhookVerifier};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -17,7 +17,13 @@ use tower::ServiceExt;
 const SECRET: &str = "whsec_axum_test";
 
 fn now() -> i64 {
-    i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()).unwrap()
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
 }
 
 fn sign(timestamp: i64, body: &[u8]) -> String {
@@ -25,7 +31,10 @@ fn sign(timestamp: i64, body: &[u8]) -> String {
     mac.update(timestamp.to_string().as_bytes());
     mac.update(b".");
     mac.update(body);
-    format!("t={timestamp},v1={}", hex::encode(mac.finalize().into_bytes()))
+    format!(
+        "t={timestamp},v1={}",
+        hex::encode(mac.finalize().into_bytes())
+    )
 }
 
 async fn handler(VerifiedWebhook(event): VerifiedWebhook) -> String {
@@ -66,7 +75,9 @@ async fn valid_signature_is_accepted_and_parsed() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
     assert_eq!(&bytes[..], b"m_axum");
 }
 

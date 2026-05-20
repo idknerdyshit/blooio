@@ -9,10 +9,10 @@ pub mod signature;
 #[cfg(any(feature = "axum", feature = "actix"))]
 pub mod server;
 
-#[cfg(feature = "axum")]
-pub mod axum;
 #[cfg(feature = "actix")]
 pub mod actix;
+#[cfg(feature = "axum")]
+pub mod axum;
 
 pub use signature::{DEFAULT_TOLERANCE_SECS, VerifyError, verify, verify_at, verify_default};
 

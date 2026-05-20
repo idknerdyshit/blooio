@@ -26,7 +26,7 @@ use std::pin::Pin;
 
 use ::actix_web::error::InternalError;
 use ::actix_web::http::StatusCode;
-use ::actix_web::{web, FromRequest, HttpRequest};
+use ::actix_web::{FromRequest, HttpRequest, web};
 
 use crate::webhook::server::{VerifiedWebhook, WebhookVerifier};
 

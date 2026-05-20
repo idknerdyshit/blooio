@@ -18,7 +18,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Mirror of the async surface — same method names, no `.await`.
     let numbers = client.numbers().list()?;
-    println!("{} sending number(s) on this account", numbers.numbers.len());
+    println!(
+        "{} sending number(s) on this account",
+        numbers.numbers.len()
+    );
 
     // The blocking paginator is an `Iterator`, so a plain `for` loop walks
     // every page; each item is a `Result` you can `?` on.
@@ -29,7 +32,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Ok(chat_id) = env::var("CHAT_ID") {
-        let sent = client.chat(chat_id).send_text("sent from a blocking thread")?;
+        let sent = client
+            .chat(chat_id)
+            .send_text("sent from a blocking thread")?;
         println!("sent: {:?}", sent.ids());
     }
 

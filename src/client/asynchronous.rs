@@ -62,10 +62,7 @@ impl Client {
     /// Execute an [`Operation`] and decode its response, also returning the
     /// [`ResponseMeta`] (rate-limit headers and `Retry-After`) from the HTTP
     /// response. Use this when you want to self-pace against the API's limits.
-    pub async fn send_with_meta<O: Operation>(
-        &self,
-        op: O,
-    ) -> Result<(O::Output, ResponseMeta)> {
+    pub async fn send_with_meta<O: Operation>(&self, op: O) -> Result<(O::Output, ResponseMeta)> {
         let mut spec = RequestSpec::build(&op)?;
         let retry = self.config.retry;
         // A retried mutating request must be idempotent.

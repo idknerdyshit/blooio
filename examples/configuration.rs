@@ -24,11 +24,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let config = ClientConfig::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()))
-        // Point at a staging deployment or a local mock; trailing slashes are trimmed.
-        .with_base_url("https://backend.blooio.com/v2/api")
-        .with_timeout(Duration::from_secs(10))
-        .with_user_agent("acme-bot/1.4 (+https://acme.example)");
+    let config =
+        ClientConfig::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()))
+            // Point at a staging deployment or a local mock; trailing slashes are trimmed.
+            .with_base_url("https://backend.blooio.com/v2/api")
+            .with_timeout(Duration::from_secs(10))
+            .with_user_agent("acme-bot/1.4 (+https://acme.example)");
 
     let client = Client::from_config(config)?;
 

@@ -5,7 +5,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use actix_web::{test, web, App, HttpResponse};
+use actix_web::{App, HttpResponse, test, web};
 use blooio::webhook::{VerifiedWebhook, WebhookVerifier};
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -13,7 +13,13 @@ use sha2::Sha256;
 const SECRET: &str = "whsec_actix_test";
 
 fn now() -> i64 {
-    i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()).unwrap()
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
 }
 
 fn sign(timestamp: i64, body: &[u8]) -> String {
@@ -21,7 +27,10 @@ fn sign(timestamp: i64, body: &[u8]) -> String {
     mac.update(timestamp.to_string().as_bytes());
     mac.update(b".");
     mac.update(body);
-    format!("t={timestamp},v1={}", hex::encode(mac.finalize().into_bytes()))
+    format!(
+        "t={timestamp},v1={}",
+        hex::encode(mac.finalize().into_bytes())
+    )
 }
 
 async fn handler(VerifiedWebhook(event): VerifiedWebhook) -> HttpResponse {
