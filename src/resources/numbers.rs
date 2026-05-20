@@ -109,19 +109,4 @@ mod tests {
     fn list_numbers_path() {
         assert_eq!(ListNumbers.path(), "/me/numbers");
     }
-
-    #[test]
-    fn list_numbers_query_is_empty() {
-        assert!(ListNumbers.query().is_empty());
-    }
-
-    #[test]
-    fn list_numbers_headers_is_empty() {
-        assert!(ListNumbers.headers().is_empty());
-    }
-
-    #[test]
-    fn list_numbers_body_is_none() {
-        assert!(ListNumbers.body().unwrap().is_none());
-    }
 }

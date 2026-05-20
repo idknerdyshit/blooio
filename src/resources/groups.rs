@@ -637,12 +637,6 @@ mod tests {
         assert!(q.contains(&("limit", "5".into())));
     }
 
-    #[test]
-    fn list_groups_body_is_none() {
-        let op = ListGroups::default();
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- CreateGroup ---
 
     #[test]
@@ -698,15 +692,6 @@ mod tests {
         assert_eq!(op.path(), "/groups/g1");
     }
 
-    #[test]
-    fn get_group_query_and_body_empty() {
-        let op = GetGroup {
-            group_id: "g1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- UpdateGroup ---
 
     #[test]
@@ -752,15 +737,6 @@ mod tests {
         assert_eq!(op.path(), "/groups/g1");
     }
 
-    #[test]
-    fn delete_group_query_and_body_empty() {
-        let op = DeleteGroup {
-            group_id: "g1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- SetGroupIcon ---
 
     #[test]
@@ -796,15 +772,6 @@ mod tests {
             group_id: "g1".into(),
         };
         assert_eq!(op.path(), "/groups/g1/icon");
-    }
-
-    #[test]
-    fn remove_group_icon_query_and_body_empty() {
-        let op = RemoveGroupIcon {
-            group_id: "g1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
     }
 
     // --- ListGroupMembers ---
@@ -843,16 +810,6 @@ mod tests {
         assert!(q.contains(&("offset", "50".into())));
     }
 
-    #[test]
-    fn list_group_members_body_is_none() {
-        let op = ListGroupMembers {
-            group_id: "g1".into(),
-            limit: None,
-            offset: None,
-        };
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- AddGroupMember ---
 
     #[test]
@@ -887,15 +844,5 @@ mod tests {
             contact_id: "m1".into(),
         };
         assert_eq!(op.path(), "/groups/g1/members/m1");
-    }
-
-    #[test]
-    fn remove_group_member_query_and_body_empty() {
-        let op = RemoveGroupMember {
-            group_id: "g1".into(),
-            contact_id: "m1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
     }
 }

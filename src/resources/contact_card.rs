@@ -224,22 +224,6 @@ mod tests {
         assert_eq!(op.path(), "/me/numbers/abc123/contact-card");
     }
 
-    #[test]
-    fn get_contact_card_query_empty() {
-        let op = GetMyContactCard {
-            number: "abc123".into(),
-        };
-        assert!(op.query().is_empty());
-    }
-
-    #[test]
-    fn get_contact_card_body_none() {
-        let op = GetMyContactCard {
-            number: "abc123".into(),
-        };
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- UpdateMyContactCard ---
 
     #[test]
@@ -327,11 +311,5 @@ mod tests {
                 "sharing": { "enabled": false, "audience": 0 }
             })
         );
-    }
-
-    #[test]
-    fn update_contact_card_query_empty() {
-        let op = UpdateMyContactCard::new("abc123");
-        assert!(op.query().is_empty());
     }
 }

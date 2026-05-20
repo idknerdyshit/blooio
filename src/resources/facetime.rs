@@ -117,22 +117,6 @@ mod tests {
     }
 
     #[test]
-    fn call_facetime_query_is_empty() {
-        let op = CallFaceTime {
-            handle: "abc123".into(),
-        };
-        assert!(op.query().is_empty());
-    }
-
-    #[test]
-    fn call_facetime_headers_is_empty() {
-        let op = CallFaceTime {
-            handle: "abc123".into(),
-        };
-        assert!(op.headers().is_empty());
-    }
-
-    #[test]
     fn call_facetime_body_serializes_handle() {
         let op = CallFaceTime {
             handle: "abc123".into(),

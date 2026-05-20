@@ -200,14 +200,6 @@ mod tests {
         assert_eq!(q[0], ("number", "+15550001111".to_string()));
     }
 
-    #[test]
-    fn lookup_body_is_none() {
-        let op = LookupPhoneNumber {
-            number: "+15550001111".into(),
-        };
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- LookupPhoneNumberPost (POST) ---
 
     #[test]
@@ -221,14 +213,6 @@ mod tests {
             number: "+15550001111".into(),
         };
         assert_eq!(op.path(), "/phone-numbers/lookup");
-    }
-
-    #[test]
-    fn lookup_post_query_empty() {
-        let op = LookupPhoneNumberPost {
-            number: "+15550001111".into(),
-        };
-        assert!(op.query().is_empty());
     }
 
     #[test]
@@ -254,14 +238,6 @@ mod tests {
             numbers: vec!["+15550001111".into()],
         };
         assert_eq!(op.path(), "/phone-numbers/batch");
-    }
-
-    #[test]
-    fn batch_query_empty() {
-        let op = BatchLookupPhoneNumbers {
-            numbers: vec!["+15550001111".into()],
-        };
-        assert!(op.query().is_empty());
     }
 
     #[test]

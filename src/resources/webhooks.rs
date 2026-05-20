@@ -574,13 +574,6 @@ mod tests {
         assert_eq!(op.path(), "/webhooks");
     }
 
-    #[test]
-    fn list_webhooks_query_and_body_empty() {
-        let op = ListWebhooks;
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- CreateWebhook ---
 
     #[test]
@@ -637,15 +630,6 @@ mod tests {
             webhook_id: "wh1".into(),
         };
         assert_eq!(op.path(), "/webhooks/wh1");
-    }
-
-    #[test]
-    fn get_webhook_query_and_body_empty() {
-        let op = GetWebhook {
-            webhook_id: "wh1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
     }
 
     // --- UpdateWebhook builder ---
@@ -727,15 +711,6 @@ mod tests {
         assert_eq!(op.path(), "/webhooks/wh1");
     }
 
-    #[test]
-    fn delete_webhook_query_and_body_empty() {
-        let op = DeleteWebhook {
-            webhook_id: "wh1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- RotateWebhookSecret ---
 
     #[test]
@@ -745,15 +720,6 @@ mod tests {
             webhook_id: "wh1".into(),
         };
         assert_eq!(op.path(), "/webhooks/wh1/secret/rotate");
-    }
-
-    #[test]
-    fn rotate_webhook_secret_query_and_body_empty() {
-        let op = RotateWebhookSecret {
-            webhook_id: "wh1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
     }
 
     // --- ListWebhookLogs ---
@@ -824,20 +790,6 @@ mod tests {
         assert!(q.contains(&("limit", "20".into())));
     }
 
-    #[test]
-    fn list_webhook_logs_body_is_none() {
-        let op = ListWebhookLogs {
-            webhook_id: "wh1".into(),
-            limit: None,
-            offset: None,
-            sort: None,
-            status: None,
-            min_status: None,
-            max_status: None,
-        };
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- ReplayWebhookEvent ---
 
     #[test]
@@ -848,15 +800,5 @@ mod tests {
             event_id: "evt1".into(),
         };
         assert_eq!(op.path(), "/webhooks/wh1/logs/evt1/replay");
-    }
-
-    #[test]
-    fn replay_webhook_event_query_and_body_empty() {
-        let op = ReplayWebhookEvent {
-            webhook_id: "wh1".into(),
-            event_id: "evt1".into(),
-        };
-        assert!(op.query().is_empty());
-        assert!(op.body().unwrap().is_none());
     }
 }

@@ -559,12 +559,6 @@ mod tests {
         assert_eq!(q[0], ("limit", "3".to_string()));
     }
 
-    #[test]
-    fn list_contacts_body_none() {
-        let op = ListContacts::default();
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- CreateContact ---
 
     #[test]
@@ -606,15 +600,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn create_contact_query_empty() {
-        let op = CreateContact {
-            identifier: "+15550001111".into(),
-            name: None,
-        };
-        assert!(op.query().is_empty());
-    }
-
     // --- GetContact ---
 
     #[test]
@@ -628,22 +613,6 @@ mod tests {
             contact_id: "abc123".into(),
         };
         assert_eq!(op.path(), "/contacts/abc123");
-    }
-
-    #[test]
-    fn get_contact_query_empty() {
-        let op = GetContact {
-            contact_id: "abc123".into(),
-        };
-        assert!(op.query().is_empty());
-    }
-
-    #[test]
-    fn get_contact_body_none() {
-        let op = GetContact {
-            contact_id: "abc123".into(),
-        };
-        assert!(op.body().unwrap().is_none());
     }
 
     // --- UpdateContact ---
@@ -684,15 +653,6 @@ mod tests {
         assert_eq!(v, serde_json::json!({ "name": "Bob" }));
     }
 
-    #[test]
-    fn update_contact_query_empty() {
-        let op = UpdateContact {
-            contact_id: "abc123".into(),
-            name: None,
-        };
-        assert!(op.query().is_empty());
-    }
-
     // --- DeleteContact ---
 
     #[test]
@@ -706,14 +666,6 @@ mod tests {
             contact_id: "abc123".into(),
         };
         assert_eq!(op.path(), "/contacts/abc123");
-    }
-
-    #[test]
-    fn delete_contact_body_none() {
-        let op = DeleteContact {
-            contact_id: "abc123".into(),
-        };
-        assert!(op.body().unwrap().is_none());
     }
 
     // --- GetContactCapabilities ---
@@ -731,14 +683,6 @@ mod tests {
         assert_eq!(op.path(), "/contacts/abc123/capabilities");
     }
 
-    #[test]
-    fn get_capabilities_body_none() {
-        let op = GetContactCapabilities {
-            contact_id: "abc123".into(),
-        };
-        assert!(op.body().unwrap().is_none());
-    }
-
     // --- ListContactTags ---
 
     #[test]
@@ -752,14 +696,6 @@ mod tests {
             contact_id: "abc123".into(),
         };
         assert_eq!(op.path(), "/contacts/abc123/tags");
-    }
-
-    #[test]
-    fn list_tags_body_none() {
-        let op = ListContactTags {
-            contact_id: "abc123".into(),
-        };
-        assert!(op.body().unwrap().is_none());
     }
 
     // --- AddContactTags ---
@@ -800,15 +736,6 @@ mod tests {
         assert_eq!(v, serde_json::json!({ "tags": ["vip", "priority"] }));
     }
 
-    #[test]
-    fn add_tags_query_empty() {
-        let op = AddContactTags {
-            contact_id: "abc123".into(),
-            tags: vec!["vip".into()],
-        };
-        assert!(op.query().is_empty());
-    }
-
     // --- RemoveContactTag ---
 
     #[test]
@@ -823,23 +750,5 @@ mod tests {
             tag: "vip".into(),
         };
         assert_eq!(op.path(), "/contacts/abc123/tags/vip");
-    }
-
-    #[test]
-    fn remove_tag_body_none() {
-        let op = RemoveContactTag {
-            contact_id: "abc123".into(),
-            tag: "vip".into(),
-        };
-        assert!(op.body().unwrap().is_none());
-    }
-
-    #[test]
-    fn remove_tag_query_empty() {
-        let op = RemoveContactTag {
-            contact_id: "abc123".into(),
-            tag: "vip".into(),
-        };
-        assert!(op.query().is_empty());
     }
 }

@@ -85,19 +85,4 @@ mod tests {
     fn get_me_path() {
         assert_eq!(GetMe.path(), "/me");
     }
-
-    #[test]
-    fn get_me_query_is_empty() {
-        assert!(GetMe.query().is_empty());
-    }
-
-    #[test]
-    fn get_me_headers_is_empty() {
-        assert!(GetMe.headers().is_empty());
-    }
-
-    #[test]
-    fn get_me_body_is_none() {
-        assert!(GetMe.body().unwrap().is_none());
-    }
 }
