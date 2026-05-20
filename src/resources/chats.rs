@@ -9,7 +9,7 @@ use crate::core::operation::{Operation, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{
-    Chat, ChatBackgroundResponse, ChatDetail, Json, LinkPreview, Message, MessageDetail,
+    Chat, ChatBackgroundResponse, Json, LinkPreview, Message, MessageDetail,
     MessageStatus, ReactionResponse, ReadResponse, SendMessageResponse, TypingResponse,
 };
 
@@ -209,7 +209,7 @@ pub struct GetChat {
 }
 
 impl Operation for GetChat {
-    type Output = ChatDetail;
+    type Output = Chat;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
         format!("/chats/{}", self.chat_id)
@@ -698,7 +698,7 @@ impl<'c> Chats<'c, crate::BlockingClient> {
 #[cfg(feature = "async")]
 impl<'c> Chat_<'c, crate::Client> {
     /// Fetch this chat's detail.
-    pub async fn get(&self) -> Result<ChatDetail> {
+    pub async fn get(&self) -> Result<Chat> {
         self.client
             .send(GetChat {
                 chat_id: self.chat_id.clone(),
@@ -883,7 +883,7 @@ impl<'c> Chat_<'c, crate::Client> {
 #[cfg(feature = "sync")]
 impl<'c> Chat_<'c, crate::BlockingClient> {
     /// Fetch this chat's detail.
-    pub fn get(&self) -> Result<ChatDetail> {
+    pub fn get(&self) -> Result<Chat> {
         self.client.send(GetChat {
             chat_id: self.chat_id.clone(),
         })

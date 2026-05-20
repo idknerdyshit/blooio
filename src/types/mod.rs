@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::secret::Secret;
+
 /// Free-form JSON value alias used for loosely-typed API fields.
 pub type Json = Value;
 
@@ -60,7 +62,9 @@ pub struct MeResponse {
     pub auth_type: Option<String>,
     pub valid: Option<bool>,
     pub user_id: Option<String>,
-    pub api_key: Option<String>,
+    // Wrapped in `Secret` so the key never appears in `Debug`/tracing output,
+    // matching the crate-wide redaction invariant.
+    pub api_key: Option<Secret<String>>,
     pub organization_id: Option<String>,
     pub organization: Option<Json>,
     pub metadata: Option<Json>,
@@ -222,33 +226,12 @@ pub struct LastMessage {
     pub time_sent: Option<i64>,
 }
 
-/// A chat (list view).
+/// A chat. The list and detail endpoints return the same shape; detail
+/// responses additionally populate `first_message_time`.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct Chat {
-    pub id: Option<String>,
-    #[serde(rename = "type")]
-    pub kind: Option<String>,
-    pub is_group: Option<bool>,
-    pub group_id: Option<String>,
-    pub group_name: Option<String>,
-    pub member_count: Option<i64>,
-    pub contact: Option<Json>,
-    pub message_count: Option<i64>,
-    pub inbound_count: Option<i64>,
-    pub outbound_count: Option<i64>,
-    pub last_message_time: Option<i64>,
-    pub last_inbound_time: Option<i64>,
-    pub last_outbound_time: Option<i64>,
-    pub last_message: Option<LastMessage>,
-}
-
-/// A chat (detail view).
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Deserialize)]
-#[non_exhaustive]
-pub struct ChatDetail {
     pub id: Option<String>,
     #[serde(rename = "type")]
     pub kind: Option<String>,
@@ -395,11 +378,11 @@ pub struct SendMessageResponse {
 
 impl SendMessageResponse {
     /// All message IDs from this response, whether single or batch.
-    pub fn ids(&self) -> Vec<String> {
+    pub fn ids(&self) -> Vec<&str> {
         if let Some(ids) = &self.message_ids {
-            ids.clone()
+            ids.iter().map(String::as_str).collect()
         } else if let Some(id) = &self.message_id {
-            vec![id.clone()]
+            vec![id.as_str()]
         } else {
             Vec::new()
         }

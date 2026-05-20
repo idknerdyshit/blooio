@@ -1,6 +1,7 @@
 //! Blocking executor backed by [`ureq`]. Pulls no async runtime.
 
 use http::Method;
+use http::header::AUTHORIZATION;
 
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
@@ -17,6 +18,9 @@ use crate::secret::Secret;
 pub struct BlockingClient {
     config: ClientConfig,
     agent: ureq::Agent,
+    // Precomputed `Bearer <key>` header value. Built once (the key never
+    // changes after construction) and kept in `Secret` so it stays redacted.
+    auth_header: Secret<String>,
 }
 
 impl BlockingClient {
@@ -30,6 +34,7 @@ impl BlockingClient {
         let builder = ureq::Agent::config_builder()
             // We read non-2xx bodies ourselves to map them to `Error::Api`.
             .http_status_as_error(false)
+            .user_agent(&config.user_agent)
             .timeout_global(Some(config.timeout));
 
         // When the native-tls backend is selected (and rustls is not), point
@@ -42,7 +47,12 @@ impl BlockingClient {
         );
 
         let agent: ureq::Agent = builder.build().into();
-        Ok(BlockingClient { config, agent })
+        let auth_header = Secret::new(format!("Bearer {}", config.api_key.expose()));
+        Ok(BlockingClient {
+            config,
+            agent,
+            auth_header,
+        })
     }
 
     /// The configuration this client was built with.
@@ -58,12 +68,9 @@ impl BlockingClient {
         for (k, v) in &spec.query {
             rb = rb.query(*k, v);
         }
-        // API key exposed only to build the header; never logged.
-        rb = rb.header(
-            "Authorization",
-            &format!("Bearer {}", self.config.api_key.expose()),
-        );
-        rb = rb.header("User-Agent", &self.config.user_agent);
+        // Key exposed only to set the header; never logged. The User-Agent is
+        // configured on the agent at build time, not per-request.
+        rb = rb.header(AUTHORIZATION.as_str(), self.auth_header.expose().as_str());
         for (k, v) in &spec.headers {
             rb = rb.header(*k, v);
         }
@@ -109,6 +116,8 @@ impl BlockingClient {
         let status = resp.status().as_u16();
         let bytes = resp.body_mut().read_to_vec().map_err(Error::transport)?;
 
+        let parsed = parse(status, &bytes);
+
         #[cfg(feature = "tracing")]
         {
             span.record("status", status);
@@ -116,17 +125,13 @@ impl BlockingClient {
                 "elapsed_ms",
                 u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
             );
-            if (200..300).contains(&status) {
-                tracing::debug!("request completed");
-            } else {
-                let code = crate::core::response::map_error(status, &bytes)
-                    .code()
-                    .map(str::to_owned);
-                tracing::warn!(code = ?code, "request failed");
+            match &parsed {
+                Ok(_) => tracing::debug!("request completed"),
+                Err(e) => tracing::warn!(code = ?e.code(), "request failed"),
             }
         }
 
-        parse(status, &bytes)
+        parsed
     }
 
     fn send_with_body(

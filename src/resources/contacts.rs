@@ -118,6 +118,23 @@ pub struct CreateContact {
     pub name: Option<String>,
 }
 
+impl CreateContact {
+    /// Create a new builder with only the required `identifier`.
+    pub fn new(identifier: impl Into<String>) -> Self {
+        CreateContact {
+            identifier: identifier.into(),
+            name: None,
+        }
+    }
+
+    /// Set the contact's display name.
+    #[must_use]
+    pub fn name(mut self, v: impl Into<String>) -> Self {
+        self.name = Some(v.into());
+        self
+    }
+}
+
 impl Operation for CreateContact {
     type Output = Contact;
     const METHOD: Method = Method::POST;
@@ -298,18 +315,9 @@ impl<'c> Contacts<'c, crate::Client> {
         })
     }
 
-    /// Create a contact.
-    pub async fn create(
-        &self,
-        identifier: impl Into<String>,
-        name: Option<String>,
-    ) -> Result<Contact> {
-        self.client
-            .send(CreateContact {
-                identifier: identifier.into(),
-                name,
-            })
-            .await
+    /// Create a contact. Build the request with [`CreateContact::new`].
+    pub async fn create(&self, op: CreateContact) -> Result<Contact> {
+        self.client.send(op).await
     }
 
     /// Get a contact by id.
@@ -416,12 +424,9 @@ impl<'c> Contacts<'c, crate::BlockingClient> {
         })
     }
 
-    /// Create a contact.
-    pub fn create(&self, identifier: impl Into<String>, name: Option<String>) -> Result<Contact> {
-        self.client.send(CreateContact {
-            identifier: identifier.into(),
-            name,
-        })
+    /// Create a contact. Build the request with [`CreateContact::new`].
+    pub fn create(&self, op: CreateContact) -> Result<Contact> {
+        self.client.send(op)
     }
 
     /// Get a contact by id.

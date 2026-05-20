@@ -15,6 +15,10 @@ pub struct Pagination {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub total: Option<i64>,
+    /// Number of items returned in this page (some endpoints report it).
+    pub returned: Option<i64>,
+    /// Whether further pages exist (some endpoints report it).
+    pub has_more: Option<bool>,
 }
 
 /// A single page of results plus its pagination metadata.
@@ -219,6 +223,7 @@ mod tests {
                 limit: Some(50),
                 offset: Some(0),
                 total: Some(3),
+                ..Default::default()
             }),
         };
         let items = c.advance(page);
@@ -236,6 +241,7 @@ mod tests {
                 limit: Some(2),
                 offset: Some(0),
                 total: Some(10),
+                ..Default::default()
             }),
         };
         c.advance(page);
@@ -252,6 +258,7 @@ mod tests {
                 limit: Some(2),
                 offset: Some(0),
                 total: Some(2),
+                ..Default::default()
             }),
         };
         c.advance(page);

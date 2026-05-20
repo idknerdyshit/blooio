@@ -113,6 +113,31 @@ pub struct CreateGroup {
     pub members: Option<Vec<String>>,
 }
 
+impl CreateGroup {
+    /// Create a new builder with only the required `name`.
+    pub fn new(name: impl Into<String>) -> Self {
+        CreateGroup {
+            name: name.into(),
+            chat_guid: None,
+            members: None,
+        }
+    }
+
+    /// Set the originating chat GUID.
+    #[must_use]
+    pub fn chat_guid(mut self, v: impl Into<String>) -> Self {
+        self.chat_guid = Some(v.into());
+        self
+    }
+
+    /// Set the initial member list.
+    #[must_use]
+    pub fn members(mut self, v: Vec<String>) -> Self {
+        self.members = Some(v);
+        self
+    }
+}
+
 impl Operation for CreateGroup {
     type Output = Json;
     const METHOD: Method = Method::POST;
@@ -327,20 +352,9 @@ impl<'c> Groups<'c, crate::Client> {
         })
     }
 
-    /// Create a group.
-    pub async fn create(
-        &self,
-        name: impl Into<String>,
-        chat_guid: Option<String>,
-        members: Option<Vec<String>>,
-    ) -> Result<Json> {
-        self.client
-            .send(CreateGroup {
-                name: name.into(),
-                chat_guid,
-                members,
-            })
-            .await
+    /// Create a group. Build the request with [`CreateGroup::new`].
+    pub async fn create(&self, op: CreateGroup) -> Result<Json> {
+        self.client.send(op).await
     }
 
     /// Get a group by id.
@@ -426,18 +440,9 @@ impl<'c> Groups<'c, crate::BlockingClient> {
         })
     }
 
-    /// Create a group.
-    pub fn create(
-        &self,
-        name: impl Into<String>,
-        chat_guid: Option<String>,
-        members: Option<Vec<String>>,
-    ) -> Result<Json> {
-        self.client.send(CreateGroup {
-            name: name.into(),
-            chat_guid,
-            members,
-        })
+    /// Create a group. Build the request with [`CreateGroup::new`].
+    pub fn create(&self, op: CreateGroup) -> Result<Json> {
+        self.client.send(op)
     }
 
     /// Get a group by id.

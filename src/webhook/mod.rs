@@ -26,18 +26,18 @@ pub enum MessageEventKind {
 }
 
 impl MessageEventKind {
-    /// Classify a raw `event` string.
+    /// Classify a raw `event` string (matched case-insensitively).
     pub fn from_event(event: &str) -> Self {
-        let e = event.to_ascii_lowercase();
-        if e.contains("received") {
+        let eq = |name: &str| event.eq_ignore_ascii_case(name);
+        if eq("message.received") {
             MessageEventKind::Received
-        } else if e.contains("delivered") {
+        } else if eq("message.delivered") {
             MessageEventKind::Delivered
-        } else if e.contains("failed") {
+        } else if eq("message.failed") {
             MessageEventKind::Failed
-        } else if e.contains("read") {
+        } else if eq("message.read") {
             MessageEventKind::Read
-        } else if e.contains("sent") {
+        } else if eq("message.sent") {
             MessageEventKind::Sent
         } else {
             MessageEventKind::Other(event.to_owned())

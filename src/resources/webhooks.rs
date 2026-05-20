@@ -55,25 +55,13 @@ pub struct RotateSecretResponse {
     pub rotation_count: Option<i64>,
 }
 
-/// Pagination metadata returned inside `ListWebhookLogsResponse`.
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Deserialize)]
-#[non_exhaustive]
-pub struct WebhookLogPagination {
-    pub total: Option<i64>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-    pub returned: Option<i64>,
-    pub has_more: Option<bool>,
-}
-
 /// Response of `GET /webhooks/{webhookId}/logs`.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ListWebhookLogsResponse {
     pub logs: Vec<WebhookLog>,
-    pub pagination: Option<WebhookLogPagination>,
+    pub pagination: Option<Pagination>,
 }
 
 impl Listing for ListWebhookLogsResponse {
@@ -81,11 +69,7 @@ impl Listing for ListWebhookLogsResponse {
     fn into_page(self) -> Page<Self::Item> {
         Page {
             items: self.logs,
-            pagination: self.pagination.map(|p| Pagination {
-                limit: p.limit,
-                offset: p.offset,
-                total: p.total,
-            }),
+            pagination: self.pagination,
         }
     }
 }
@@ -130,6 +114,31 @@ pub struct CreateWebhook {
     pub webhook_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub valid_until: Option<i64>,
+}
+
+impl CreateWebhook {
+    /// Create a new builder with only the required `webhook_url`.
+    pub fn new(webhook_url: impl Into<String>) -> Self {
+        CreateWebhook {
+            webhook_url: webhook_url.into(),
+            webhook_type: None,
+            valid_until: None,
+        }
+    }
+
+    /// Set the webhook type.
+    #[must_use]
+    pub fn webhook_type(mut self, v: impl Into<String>) -> Self {
+        self.webhook_type = Some(v.into());
+        self
+    }
+
+    /// Set the expiry timestamp.
+    #[must_use]
+    pub fn valid_until(mut self, v: i64) -> Self {
+        self.valid_until = Some(v);
+        self
+    }
 }
 
 impl Operation for CreateWebhook {
@@ -248,7 +257,7 @@ impl Operation for RotateWebhookSecret {
 
 /// `GET /webhooks/{webhookId}/logs`
 #[allow(missing_docs)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ListWebhookLogs {
     pub webhook_id: String,
     pub limit: Option<u32>,
@@ -338,20 +347,9 @@ impl<'c> Webhooks<'c, crate::Client> {
         self.client.send(ListWebhooks).await
     }
 
-    /// Create a new webhook.
-    pub async fn create(
-        &self,
-        webhook_url: impl Into<String>,
-        webhook_type: Option<String>,
-        valid_until: Option<i64>,
-    ) -> Result<CreateWebhookResponse> {
-        self.client
-            .send(CreateWebhook {
-                webhook_url: webhook_url.into(),
-                webhook_type,
-                valid_until,
-            })
-            .await
+    /// Create a new webhook. Build the request with [`CreateWebhook::new`].
+    pub async fn create(&self, op: CreateWebhook) -> Result<CreateWebhookResponse> {
+        self.client.send(op).await
     }
 
     /// Get a webhook by id.
@@ -405,18 +403,9 @@ impl<'c> Webhooks<'c, crate::BlockingClient> {
         self.client.send(ListWebhooks)
     }
 
-    /// Create a new webhook.
-    pub fn create(
-        &self,
-        webhook_url: impl Into<String>,
-        webhook_type: Option<String>,
-        valid_until: Option<i64>,
-    ) -> Result<CreateWebhookResponse> {
-        self.client.send(CreateWebhook {
-            webhook_url: webhook_url.into(),
-            webhook_type,
-            valid_until,
-        })
+    /// Create a new webhook. Build the request with [`CreateWebhook::new`].
+    pub fn create(&self, op: CreateWebhook) -> Result<CreateWebhookResponse> {
+        self.client.send(op)
     }
 
     /// Get a webhook by id.
@@ -461,12 +450,7 @@ impl<'c> WebhookLogs<'c, crate::Client> {
         self.client
             .send(ListWebhookLogs {
                 webhook_id: self.webhook_id.clone(),
-                limit: None,
-                offset: None,
-                sort: None,
-                status: None,
-                min_status: None,
-                max_status: None,
+                ..Default::default()
             })
             .await
     }
@@ -486,10 +470,7 @@ impl<'c> WebhookLogs<'c, crate::Client> {
                 webhook_id: webhook_id.clone(),
                 offset: Some(offset),
                 limit: Some(limit),
-                sort: None,
-                status: None,
-                min_status: None,
-                max_status: None,
+                ..Default::default()
             }
         })
     }
@@ -511,12 +492,7 @@ impl<'c> WebhookLogs<'c, crate::BlockingClient> {
     pub fn list(&self) -> Result<ListWebhookLogsResponse> {
         self.client.send(ListWebhookLogs {
             webhook_id: self.webhook_id.clone(),
-            limit: None,
-            offset: None,
-            sort: None,
-            status: None,
-            min_status: None,
-            max_status: None,
+            ..Default::default()
         })
     }
 
@@ -536,10 +512,7 @@ impl<'c> WebhookLogs<'c, crate::BlockingClient> {
                 webhook_id: webhook_id.clone(),
                 offset: Some(offset),
                 limit: Some(limit),
-                sort: None,
-                status: None,
-                min_status: None,
-                max_status: None,
+                ..Default::default()
             }
         })
     }

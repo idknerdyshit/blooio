@@ -9,6 +9,9 @@
     clippy::unreadable_literal
 )]
 
+use blooio::resources::contacts::CreateContact;
+use blooio::resources::groups::CreateGroup;
+use blooio::resources::webhooks::CreateWebhook;
 use blooio::{BlockingClient, ClientConfig};
 use httpmock::prelude::*;
 
@@ -47,7 +50,7 @@ fn post_sends_json_body_and_content_type() {
 
     let c = client(&server)
         .contacts()
-        .create("+15551234567", None)
+        .create(CreateContact::new("+15551234567"))
         .unwrap();
     m.assert();
     assert_eq!(c.id.as_deref(), Some("c2"));
@@ -67,7 +70,7 @@ fn send_message_includes_idempotency_key() {
 
     let resp = client(&server).chat("chat1").send_text("hi").unwrap();
     m.assert();
-    assert_eq!(resp.ids(), vec!["m1".to_string()]);
+    assert_eq!(resp.ids(), vec!["m1"]);
 }
 
 #[test]
@@ -188,7 +191,7 @@ fn groups_create_posts_to_groups() {
 
     let resp = client(&server)
         .groups()
-        .create("Test Group", None, None)
+        .create(CreateGroup::new("Test Group"))
         .unwrap();
     m.assert();
     // CreateGroup returns Json (serde_json::Value)
@@ -254,7 +257,7 @@ fn webhooks_create_posts_url() {
 
     let resp = client(&server)
         .webhooks()
-        .create("https://example.com/hook", None, None)
+        .create(CreateWebhook::new("https://example.com/hook"))
         .unwrap();
     m.assert();
     assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));

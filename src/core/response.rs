@@ -43,8 +43,7 @@ pub fn map_error(status: u16, bytes: &[u8]) -> Error {
         let message = if raw.trim().is_empty() {
             format!("HTTP {status}")
         } else {
-            let trimmed: String = raw.chars().take(512).collect();
-            trimmed
+            raw.chars().take(512).collect()
         };
         Error::Api {
             status,

@@ -18,6 +18,9 @@ use crate::secret::Secret;
 pub struct Client {
     config: ClientConfig,
     http: reqwest::Client,
+    // Precomputed `Bearer <key>` header value. Built once (the key never
+    // changes after construction) and kept in `Secret` so it stays redacted.
+    auth_header: Secret<String>,
 }
 
 impl Client {
@@ -33,7 +36,12 @@ impl Client {
             .user_agent(config.user_agent.clone())
             .build()
             .map_err(Error::transport)?;
-        Ok(Client { config, http })
+        let auth_header = Secret::new(format!("Bearer {}", config.api_key.expose()));
+        Ok(Client {
+            config,
+            http,
+            auth_header,
+        })
     }
 
     /// The configuration this client was built with.
@@ -65,12 +73,8 @@ impl Client {
         if !spec.query.is_empty() {
             req = req.query(&spec.query);
         }
-        // The API key is exposed only here, to build the header. It is never
-        // passed to a logging macro.
-        req = req.header(
-            AUTHORIZATION,
-            format!("Bearer {}", self.config.api_key.expose()),
-        );
+        // The key is exposed only here, to set the header. It is never logged.
+        req = req.header(AUTHORIZATION, self.auth_header.expose().as_str());
         for (k, v) in &spec.headers {
             req = req.header(*k, v);
         }
@@ -82,6 +86,8 @@ impl Client {
         let status = resp.status().as_u16();
         let bytes = resp.bytes().await.map_err(Error::transport)?;
 
+        let result = parse(status, &bytes);
+
         #[cfg(feature = "tracing")]
         {
             span.record("status", status);
@@ -90,16 +96,12 @@ impl Client {
                 u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
             );
             let _e = span.enter();
-            if (200..300).contains(&status) {
-                tracing::debug!("request completed");
-            } else {
-                let code = crate::core::response::map_error(status, &bytes)
-                    .code()
-                    .map(str::to_owned);
-                tracing::warn!(code = ?code, "request failed");
+            match &result {
+                Ok(_) => tracing::debug!("request completed"),
+                Err(e) => tracing::warn!(code = ?e.code(), "request failed"),
             }
         }
 
-        parse(status, &bytes)
+        result
     }
 }

@@ -14,6 +14,9 @@
     clippy::unreadable_literal
 )]
 
+use blooio::resources::contacts::CreateContact;
+use blooio::resources::groups::CreateGroup;
+use blooio::resources::webhooks::CreateWebhook;
 use blooio::{Client, ClientConfig};
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -89,7 +92,7 @@ async fn post_sends_json_body_and_content_type() {
     let c = client(&server)
         .await
         .contacts()
-        .create("+15551234567", None)
+        .create(CreateContact::new("+15551234567"))
         .await
         .unwrap();
     assert_eq!(c.id.as_deref(), Some("c2"));
@@ -116,7 +119,7 @@ async fn send_message_includes_idempotency_key() {
         .send_text("hi")
         .await
         .unwrap();
-    assert_eq!(resp.ids(), vec!["m1".to_string()]);
+    assert_eq!(resp.ids(), vec!["m1"]);
 }
 
 #[tokio::test]
@@ -279,7 +282,7 @@ async fn groups_create_posts_body_and_returns_json() {
     let resp = client(&server)
         .await
         .groups()
-        .create("Friends", None, None)
+        .create(CreateGroup::new("Friends"))
         .await
         .unwrap();
     assert_eq!(resp["group_id"], "g1");
@@ -356,7 +359,7 @@ async fn webhooks_create_posts_url_and_returns_webhook_id() {
     let resp = client(&server)
         .await
         .webhooks()
-        .create("https://example.com/hook", None, None)
+        .create(CreateWebhook::new("https://example.com/hook"))
         .await
         .unwrap();
     assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
