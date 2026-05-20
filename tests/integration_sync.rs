@@ -9,15 +9,71 @@
     clippy::unreadable_literal
 )]
 
+use std::time::Duration;
+
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
 use blooio::resources::webhooks::CreateWebhook;
-use blooio::{BlockingClient, ClientConfig};
+use blooio::{BlockingClient, ClientConfig, RetryPolicy};
 use httpmock::prelude::*;
 
 fn client(server: &MockServer) -> BlockingClient {
     BlockingClient::from_config(ClientConfig::new("test-key").with_base_url(server.base_url()))
         .unwrap()
+}
+
+#[test]
+fn retries_transient_5xx_until_budget_exhausted() {
+    let server = MockServer::start();
+    // Always 503 with a zero Retry-After so the loop runs without real delay.
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/contacts");
+        then.status(503).header("retry-after", "0");
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.base_url())
+            .with_retry(
+                RetryPolicy::default()
+                    .with_max_retries(2)
+                    .with_base_delay(Duration::from_millis(1))
+                    .with_jitter(false),
+            ),
+    )
+    .unwrap();
+
+    let err = client
+        .contacts()
+        .create(CreateContact::new("+15550002222"))
+        .unwrap_err();
+    // max_retries = 2 → 3 total attempts.
+    m.assert_hits(3);
+    assert_eq!(err.status(), Some(503));
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
+}
+
+#[test]
+fn does_not_retry_when_policy_is_none() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/contacts");
+        then.status(503);
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.base_url())
+            .with_retry(RetryPolicy::none()),
+    )
+    .unwrap();
+
+    let err = client
+        .contacts()
+        .create(CreateContact::new("+15550003333"))
+        .unwrap_err();
+    m.assert_hits(1);
+    assert_eq!(err.status(), Some(503));
 }
 
 #[test]

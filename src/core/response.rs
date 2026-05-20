@@ -1,5 +1,7 @@
 //! Response parsing shared by both executors.
 
+use std::time::Duration;
+
 use serde::de::DeserializeOwned;
 
 use crate::error::{ApiErrorBody, Error, Result};
@@ -13,6 +15,16 @@ use crate::error::{ApiErrorBody, Error, Result};
 /// raw body is never logged here — only the status and machine `code` are safe
 /// to log, which the executors do.
 pub fn parse<T: DeserializeOwned>(status: u16, bytes: &[u8]) -> Result<T> {
+    parse_with(status, bytes, None)
+}
+
+/// Like [`parse`], but attaches a `Retry-After` hint (extracted by the executor
+/// from response headers) to any resulting [`Error::Api`].
+pub fn parse_with<T: DeserializeOwned>(
+    status: u16,
+    bytes: &[u8],
+    retry_after: Option<Duration>,
+) -> Result<T> {
     if (200..300).contains(&status) {
         // A handful of 2xx responses may legitimately carry an empty body.
         // `serde_json` can deserialize `()` and `Option<_>` from "null", but
@@ -20,12 +32,12 @@ pub fn parse<T: DeserializeOwned>(status: u16, bytes: &[u8]) -> Result<T> {
         let bytes: &[u8] = if bytes.is_empty() { b"null" } else { bytes };
         serde_json::from_slice(bytes).map_err(Error::decode)
     } else {
-        Err(map_error(status, bytes))
+        Err(map_error(status, bytes, retry_after))
     }
 }
 
 /// Map a non-2xx response body to [`Error::Api`].
-pub fn map_error(status: u16, bytes: &[u8]) -> Error {
+pub fn map_error(status: u16, bytes: &[u8], retry_after: Option<Duration>) -> Error {
     if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
         Error::Api {
             status,
@@ -35,6 +47,7 @@ pub fn map_error(status: u16, bytes: &[u8]) -> Error {
                 .or(body.error.clone())
                 .unwrap_or_else(|| format!("HTTP {status}")),
             error: body.error,
+            retry_after,
         }
     } else {
         // Body wasn't the documented error schema. Fall back to the raw
@@ -50,6 +63,7 @@ pub fn map_error(status: u16, bytes: &[u8]) -> Error {
             code: None,
             message,
             error: None,
+            retry_after,
         }
     }
 }
@@ -87,6 +101,7 @@ mod tests {
                 code,
                 message,
                 error,
+                ..
             } => {
                 assert_eq!(status, 429);
                 assert_eq!(code.as_deref(), Some("outbound_limit_reached"));

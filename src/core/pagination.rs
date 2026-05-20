@@ -121,7 +121,7 @@ where
 }
 
 #[cfg(feature = "async")]
-impl<F, O> Paginator<'_, crate::Client, F, O>
+impl<'c, F, O> Paginator<'c, crate::Client, F, O>
 where
     F: Fn(u32, u32) -> O,
     O: Operation,
@@ -149,6 +149,37 @@ where
             all.extend(page?);
         }
         Ok(all)
+    }
+
+    /// Consume the paginator as an item-by-item [`Stream`](futures_core::Stream).
+    ///
+    /// Pages are fetched lazily as the stream is polled and flattened into
+    /// individual items, so callers can `use futures::StreamExt;` and write
+    /// `while let Some(item) = stream.next().await { … }` without thinking about
+    /// page boundaries. The stream ends after yielding the first error.
+    pub fn stream(
+        self,
+    ) -> impl futures_core::Stream<Item = Result<<O::Output as Listing>::Item>> + 'c
+    where
+        F: 'c,
+        O: 'c,
+    {
+        async_stream::stream! {
+            let mut paginator = self;
+            while let Some(page) = paginator.next_page().await {
+                match page {
+                    Ok(items) => {
+                        for item in items {
+                            yield Ok(item);
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(e);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 

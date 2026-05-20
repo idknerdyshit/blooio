@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use crate::core::retry::RetryPolicy;
 use crate::secret::Secret;
 
 /// The production base URL for the Blooio API.
@@ -22,6 +23,9 @@ pub struct ClientConfig {
     pub timeout: Duration,
     /// `User-Agent` header value.
     pub user_agent: String,
+    /// How transient failures are retried. Defaults to [`RetryPolicy::default`]
+    /// (up to two retries with jittered exponential backoff).
+    pub retry: RetryPolicy,
 }
 
 impl ClientConfig {
@@ -32,6 +36,7 @@ impl ClientConfig {
             api_key: api_key.into(),
             timeout: Duration::from_secs(30),
             user_agent: concat!("blooio-rs/", env!("CARGO_PKG_VERSION")).to_owned(),
+            retry: RetryPolicy::default(),
         }
     }
 
@@ -57,6 +62,13 @@ impl ClientConfig {
     #[must_use]
     pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
         self.user_agent = user_agent.into();
+        self
+    }
+
+    /// Override the retry policy. Pass [`RetryPolicy::none`] to disable retries.
+    #[must_use]
+    pub fn with_retry(mut self, retry: RetryPolicy) -> Self {
+        self.retry = retry;
         self
     }
 
