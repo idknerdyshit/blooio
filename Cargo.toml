@@ -66,6 +66,34 @@ required-features = ["tracing", "async"]
 name = "live_smoke"
 required-features = ["async"]
 
+[[example]]
+name = "quickstart"
+required-features = ["async"]
+
+[[example]]
+name = "messaging"
+required-features = ["async"]
+
+[[example]]
+name = "pagination"
+required-features = ["async"]
+
+[[example]]
+name = "error_handling"
+required-features = ["async"]
+
+[[example]]
+name = "configuration"
+required-features = ["async", "tracing"]
+
+[[example]]
+name = "blocking"
+required-features = ["sync"]
+
+[[example]]
+name = "webhooks"
+required-features = ["webhooks"]
+
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
