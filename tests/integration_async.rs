@@ -256,3 +256,268 @@ async fn error_response_maps_to_api_error() {
     assert_eq!(err.status(), Some(429));
     assert_eq!(err.code(), Some("outbound_limit_reached"));
 }
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn groups_create_posts_body_and_returns_json() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/groups"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(serde_json::json!({ "name": "Friends" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "group_id": "g1",
+            "name": "Friends"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .groups()
+        .create("Friends", None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp["group_id"], "g1");
+}
+
+#[tokio::test]
+async fn groups_get_returns_group() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/groups/g42"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "group_id": "g42",
+            "name": "Test Group",
+            "member_count": 3
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let group = client(&server).await.groups().get("g42").await.unwrap();
+    assert_eq!(group.group_id.as_deref(), Some("g42"));
+    assert_eq!(group.name.as_deref(), Some("Test Group"));
+}
+
+#[tokio::test]
+async fn groups_members_add_posts_contact_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/groups/g42/members"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(serde_json::json!({ "contact_id": "c9" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "message": "Member added",
+            "contact_created": false,
+            "member": { "id": "c9", "contact_id": "c9", "identifier": "+15550009999" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .groups()
+        .members("g42")
+        .add("c9")
+        .await
+        .unwrap();
+    assert_eq!(resp.message.as_deref(), Some("Member added"));
+    assert_eq!(resp.contact_created, Some(false));
+}
+
+// ---------------------------------------------------------------------------
+// Webhooks
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn webhooks_create_posts_url_and_returns_webhook_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/webhooks"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(
+            serde_json::json!({ "webhook_url": "https://example.com/hook" }),
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "webhook_id": "wh1",
+            "webhook_url": "https://example.com/hook",
+            "signing_secret": "sec_abc"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .webhooks()
+        .create("https://example.com/hook", None, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
+    assert_eq!(resp.signing_secret.as_deref(), Some("sec_abc"));
+}
+
+#[tokio::test]
+async fn webhooks_rotate_secret_posts_and_returns_new_secret() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/webhooks/wh1/secret/rotate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "webhook_id": "wh1",
+            "signing_secret": "sec_new",
+            "rotated_at": 1700000001,
+            "rotation_count": 2
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .webhooks()
+        .rotate_secret("wh1")
+        .await
+        .unwrap();
+    assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
+    assert_eq!(resp.signing_secret.as_deref(), Some("sec_new"));
+    assert_eq!(resp.rotation_count, Some(2));
+}
+
+#[tokio::test]
+async fn webhooks_logs_list_returns_logs() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/webhooks/wh1/logs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "logs": [
+                { "event_id": "evt1", "response_status": 200, "scope": "message" }
+            ],
+            "pagination": { "total": 1, "limit": 50, "offset": 0, "returned": 1, "has_more": false }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .webhooks()
+        .logs("wh1")
+        .list()
+        .await
+        .unwrap();
+    assert_eq!(resp.logs.len(), 1);
+    assert_eq!(resp.logs[0].event_id.as_deref(), Some("evt1"));
+    assert_eq!(resp.logs[0].response_status, Some(200));
+}
+
+// ---------------------------------------------------------------------------
+// Location
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn location_list_returns_friends() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/location/contacts"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "friends": [
+                { "handle": "+15550001111", "status": "sharing", "last_updated": 1700000000 }
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server).await.location().list().await.unwrap();
+    assert_eq!(resp.friends.len(), 1);
+    assert_eq!(resp.friends[0].handle.as_deref(), Some("+15550001111"));
+}
+
+#[tokio::test]
+async fn location_refresh_posts_and_returns_success() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/location/contacts/refresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "friends": [
+                { "handle": "+15550001111", "status": "sharing", "last_updated": 1700000010 }
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server).await.location().refresh().await.unwrap();
+    assert_eq!(resp.success, Some(true));
+    let friends = resp.friends.unwrap();
+    assert_eq!(friends.len(), 1);
+    assert_eq!(friends[0].handle.as_deref(), Some("+15550001111"));
+}
+
+// ---------------------------------------------------------------------------
+// Phone numbers
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn phone_numbers_lookup_sends_query_param() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/phone-numbers/lookup"))
+        .and(query_param("number", "+15550001111"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "input": "+15550001111",
+            "valid": true,
+            "e164": "+15550001111",
+            "country": "US"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .phone_numbers()
+        .lookup("+15550001111")
+        .await
+        .unwrap();
+    assert_eq!(resp.valid, Some(true));
+    assert_eq!(resp.e164.as_deref(), Some("+15550001111"));
+    assert_eq!(resp.country.as_deref(), Some("US"));
+}
+
+#[tokio::test]
+async fn phone_numbers_batch_posts_numbers_and_returns_results() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/phone-numbers/batch"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(serde_json::json!({
+            "numbers": ["+15550001111", "+15550002222"]
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "results": [
+                { "input": "+15550001111", "valid": true, "e164": "+15550001111" },
+                { "input": "+15550002222", "valid": true, "e164": "+15550002222" }
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .phone_numbers()
+        .batch(vec!["+15550001111".into(), "+15550002222".into()])
+        .await
+        .unwrap();
+    assert_eq!(resp.results.len(), 2);
+    assert_eq!(resp.results[0].e164.as_deref(), Some("+15550001111"));
+    assert_eq!(resp.results[1].valid, Some(true));
+}

@@ -169,3 +169,228 @@ fn error_response_maps_to_api_error() {
     assert_eq!(err.status(), Some(429));
     assert_eq!(err.code(), Some("outbound_limit_reached"));
 }
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+#[test]
+fn groups_create_posts_to_groups() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/groups")
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({ "name": "Test Group" }));
+        then.status(201)
+            .json_body(serde_json::json!({ "group_id": "g1", "name": "Test Group" }));
+    });
+
+    let resp = client(&server)
+        .groups()
+        .create("Test Group", None, None)
+        .unwrap();
+    m.assert();
+    // CreateGroup returns Json (serde_json::Value)
+    assert_eq!(resp["group_id"], "g1");
+}
+
+#[test]
+fn groups_get_fetches_by_id() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/groups/g42");
+        then.status(200).json_body(serde_json::json!({
+            "group_id": "g42",
+            "name": "My Group",
+            "member_count": 3
+        }));
+    });
+
+    let group = client(&server).groups().get("g42").unwrap();
+    m.assert();
+    assert_eq!(group.group_id.as_deref(), Some("g42"));
+    assert_eq!(group.name.as_deref(), Some("My Group"));
+}
+
+#[test]
+fn groups_members_add_posts_contact_id() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/groups/g1/members")
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({ "contact_id": "c99" }));
+        then.status(200).json_body(serde_json::json!({
+            "message": "Member added",
+            "contact_created": false
+        }));
+    });
+
+    let resp = client(&server).groups().members("g1").add("c99").unwrap();
+    m.assert();
+    assert_eq!(resp.message.as_deref(), Some("Member added"));
+    assert_eq!(resp.contact_created, Some(false));
+}
+
+// ---------------------------------------------------------------------------
+// Webhooks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn webhooks_create_posts_url() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/webhooks")
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({ "webhook_url": "https://example.com/hook" }));
+        then.status(201).json_body(serde_json::json!({
+            "webhook_id": "wh1",
+            "webhook_url": "https://example.com/hook",
+            "signing_secret": "secret123"
+        }));
+    });
+
+    let resp = client(&server)
+        .webhooks()
+        .create("https://example.com/hook", None, None)
+        .unwrap();
+    m.assert();
+    assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
+    assert_eq!(resp.signing_secret.as_deref(), Some("secret123"));
+}
+
+#[test]
+fn webhooks_rotate_secret_posts_to_rotate_path() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/webhooks/wh1/secret/rotate");
+        then.status(200).json_body(serde_json::json!({
+            "webhook_id": "wh1",
+            "signing_secret": "new-secret-xyz",
+            "rotated_at": 1700000000_i64,
+            "rotation_count": 2
+        }));
+    });
+
+    let resp = client(&server).webhooks().rotate_secret("wh1").unwrap();
+    m.assert();
+    assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
+    assert_eq!(resp.signing_secret.as_deref(), Some("new-secret-xyz"));
+    assert_eq!(resp.rotation_count, Some(2));
+}
+
+#[test]
+fn webhooks_logs_list_fetches_logs_for_webhook() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/webhooks/wh1/logs");
+        then.status(200).json_body(serde_json::json!({
+            "logs": [
+                { "event_id": "evt1", "response_status": 200 }
+            ],
+            "pagination": { "total": 1, "limit": 50, "offset": 0, "returned": 1, "has_more": false }
+        }));
+    });
+
+    let resp = client(&server).webhooks().logs("wh1").list().unwrap();
+    m.assert();
+    assert_eq!(resp.logs.len(), 1);
+    assert_eq!(resp.logs[0].event_id.as_deref(), Some("evt1"));
+}
+
+// ---------------------------------------------------------------------------
+// Location
+// ---------------------------------------------------------------------------
+
+#[test]
+fn location_list_fetches_contacts() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/location/contacts");
+        then.status(200).json_body(serde_json::json!({
+            "friends": [
+                { "handle": "+15550001111", "status": "sharing" }
+            ]
+        }));
+    });
+
+    let resp = client(&server).location().list().unwrap();
+    m.assert();
+    assert_eq!(resp.friends.len(), 1);
+    assert_eq!(resp.friends[0].handle.as_deref(), Some("+15550001111"));
+}
+
+#[test]
+fn location_refresh_posts_to_refresh_path() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/location/contacts/refresh");
+        then.status(200).json_body(serde_json::json!({
+            "success": true,
+            "friends": []
+        }));
+    });
+
+    let resp = client(&server).location().refresh().unwrap();
+    m.assert();
+    assert_eq!(resp.success, Some(true));
+}
+
+// ---------------------------------------------------------------------------
+// Phone numbers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn phone_numbers_lookup_uses_query_param() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET)
+            .path("/phone-numbers/lookup")
+            .query_param("number", "+15550001111");
+        then.status(200).json_body(serde_json::json!({
+            "input": "+15550001111",
+            "valid": true,
+            "e164": "+15550001111",
+            "country": "US"
+        }));
+    });
+
+    let resp = client(&server)
+        .phone_numbers()
+        .lookup("+15550001111")
+        .unwrap();
+    m.assert();
+    assert_eq!(resp.input.as_deref(), Some("+15550001111"));
+    assert_eq!(resp.valid, Some(true));
+    assert_eq!(resp.country.as_deref(), Some("US"));
+}
+
+#[test]
+fn phone_numbers_batch_posts_numbers_array() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/phone-numbers/batch")
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({
+                "numbers": ["+15550001111", "+15550002222"]
+            }));
+        then.status(200).json_body(serde_json::json!({
+            "results": [
+                { "input": "+15550001111", "valid": true, "e164": "+15550001111" },
+                { "input": "+15550002222", "valid": true, "e164": "+15550002222" }
+            ]
+        }));
+    });
+
+    let resp = client(&server)
+        .phone_numbers()
+        .batch(vec!["+15550001111".to_string(), "+15550002222".to_string()])
+        .unwrap();
+    m.assert();
+    assert_eq!(resp.results.len(), 2);
+    assert_eq!(resp.results[0].input.as_deref(), Some("+15550001111"));
+    assert_eq!(resp.results[1].input.as_deref(), Some("+15550002222"));
+}

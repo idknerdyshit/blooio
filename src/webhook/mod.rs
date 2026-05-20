@@ -96,4 +96,84 @@ mod tests {
             MessageEventKind::Other("message.reacted".into())
         );
     }
+
+    #[test]
+    fn classifies_each_known_event() {
+        assert_eq!(
+            MessageEventKind::from_event("message.sent"),
+            MessageEventKind::Sent
+        );
+        assert_eq!(
+            MessageEventKind::from_event("message.delivered"),
+            MessageEventKind::Delivered
+        );
+        assert_eq!(
+            MessageEventKind::from_event("message.failed"),
+            MessageEventKind::Failed
+        );
+        assert_eq!(
+            MessageEventKind::from_event("message.read"),
+            MessageEventKind::Read
+        );
+    }
+
+    #[test]
+    fn classification_is_case_insensitive() {
+        assert_eq!(
+            MessageEventKind::from_event("MESSAGE.DELIVERED"),
+            MessageEventKind::Delivered
+        );
+    }
+
+    #[test]
+    fn parses_delivered_payload_fields() {
+        let raw = br#"{"event":"message.delivered","message_id":"m2","status":"delivered","delivered_at":1700000000}"#;
+        let ev = WebhookEvent::parse(raw).unwrap();
+        assert_eq!(ev.kind(), Some(MessageEventKind::Delivered));
+        assert_eq!(ev.payload.delivered_at, Some(1700000000));
+        assert_eq!(ev.payload.status.as_deref(), Some("delivered"));
+    }
+
+    #[test]
+    fn parses_failed_payload_with_error_fields() {
+        let raw = br#"{"event":"message.failed","message_id":"m3","error_code":"unreachable","error_message":"no service"}"#;
+        let ev = WebhookEvent::parse(raw).unwrap();
+        assert_eq!(ev.kind(), Some(MessageEventKind::Failed));
+        assert_eq!(ev.payload.error_code.as_deref(), Some("unreachable"));
+        assert_eq!(ev.payload.error_message.as_deref(), Some("no service"));
+    }
+
+    #[test]
+    fn parses_group_received_payload() {
+        let raw = br#"{"event":"message.received","is_group":true,"group_id":"g1","group_name":"Team","sender":"+15550001111","text":"hi all"}"#;
+        let ev = WebhookEvent::parse(raw).unwrap();
+        assert_eq!(ev.kind(), Some(MessageEventKind::Received));
+        assert_eq!(ev.payload.is_group, Some(true));
+        assert_eq!(ev.payload.group_id.as_deref(), Some("g1"));
+    }
+
+    #[test]
+    fn kind_is_none_when_event_absent() {
+        let raw = br#"{"message_id":"m4","text":"no event field"}"#;
+        let ev = WebhookEvent::parse(raw).unwrap();
+        assert_eq!(ev.kind(), None);
+        assert_eq!(ev.payload.message_id.as_deref(), Some("m4"));
+    }
+
+    #[test]
+    fn parse_rejects_malformed_json() {
+        let err = WebhookEvent::parse(b"not json").unwrap_err();
+        assert!(matches!(err, Error::Decode(_)));
+        // A decode error is not an API error.
+        assert_eq!(err.code(), None);
+        assert_eq!(err.status(), None);
+    }
+
+    #[test]
+    fn parse_accepts_unknown_extra_fields() {
+        // Forward-compatibility: unknown keys must not break parsing.
+        let raw = br#"{"event":"message.received","brand_new_field":{"x":1},"message_id":"m5"}"#;
+        let ev = WebhookEvent::parse(raw).unwrap();
+        assert_eq!(ev.payload.message_id.as_deref(), Some("m5"));
+    }
 }
