@@ -65,3 +65,60 @@ impl ClientConfig {
         format!("{}{}", self.base_url, path)
     }
 }
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_uses_production_defaults() {
+        let cfg = ClientConfig::new("k");
+        assert_eq!(cfg.base_url, DEFAULT_BASE_URL);
+        assert_eq!(cfg.timeout, Duration::from_secs(30));
+        assert!(cfg.user_agent.starts_with("blooio-rs/"));
+    }
+
+    #[test]
+    fn with_base_url_trims_trailing_slashes() {
+        let one = ClientConfig::new("k").with_base_url("https://example.com/api/");
+        assert_eq!(one.base_url, "https://example.com/api");
+        let many = ClientConfig::new("k").with_base_url("https://example.com/api///");
+        assert_eq!(many.base_url, "https://example.com/api");
+        let none = ClientConfig::new("k").with_base_url("https://example.com/api");
+        assert_eq!(none.base_url, "https://example.com/api");
+    }
+
+    #[test]
+    fn with_timeout_and_user_agent_override() {
+        let cfg = ClientConfig::new("k")
+            .with_timeout(Duration::from_millis(500))
+            .with_user_agent("my-app/1.0");
+        assert_eq!(cfg.timeout, Duration::from_millis(500));
+        assert_eq!(cfg.user_agent, "my-app/1.0");
+    }
+
+    #[test]
+    fn url_for_concatenates_base_and_path() {
+        let cfg = ClientConfig::new("k").with_base_url("https://example.com/api");
+        assert_eq!(cfg.url_for("/me"), "https://example.com/api/me");
+        assert_eq!(
+            cfg.url_for("/chats/c1/messages"),
+            "https://example.com/api/chats/c1/messages"
+        );
+    }
+
+    #[test]
+    fn debug_redacts_api_key() {
+        let cfg = ClientConfig::new("super-secret-key");
+        let dbg = format!("{cfg:?}");
+        assert!(!dbg.contains("super-secret-key"), "api key leaked in Debug");
+        assert!(dbg.contains("REDACTED"));
+    }
+}

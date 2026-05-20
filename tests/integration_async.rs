@@ -521,3 +521,29 @@ async fn phone_numbers_batch_posts_numbers_and_returns_results() {
     assert_eq!(resp.results[0].e164.as_deref(), Some("+15550001111"));
     assert_eq!(resp.results[1].valid, Some(true));
 }
+
+#[tokio::test]
+async fn custom_user_agent_is_sent() {
+    // Verifies ClientConfig::with_user_agent threads through to the executor.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("user-agent", "my-app/9.9"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "valid": true,
+            "user_id": "u1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.uri())
+            .with_user_agent("my-app/9.9"),
+    )
+    .unwrap();
+    // The mock only matches when the User-Agent header is correct; a mismatch
+    // would return 404 and make this call fail.
+    client.account().get().await.unwrap();
+}

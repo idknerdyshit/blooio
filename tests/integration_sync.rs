@@ -394,3 +394,25 @@ fn phone_numbers_batch_posts_numbers_array() {
     assert_eq!(resp.results[0].input.as_deref(), Some("+15550001111"));
     assert_eq!(resp.results[1].input.as_deref(), Some("+15550002222"));
 }
+
+#[test]
+fn custom_user_agent_is_sent() {
+    // Verifies ClientConfig::with_user_agent threads through to the executor.
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET)
+            .path("/me")
+            .header("User-Agent", "my-app/9.9");
+        then.status(200)
+            .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.base_url())
+            .with_user_agent("my-app/9.9"),
+    )
+    .unwrap();
+    client.account().get().unwrap();
+    m.assert();
+}
