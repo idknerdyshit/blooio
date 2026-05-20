@@ -14,6 +14,7 @@
 //! Hand-written resource handles provide the ergonomic surface:
 //!
 //! ```no_run
+//! # #[cfg(feature = "async")]
 //! # async fn demo() -> blooio::Result<()> {
 //! use blooio::Client;
 //!

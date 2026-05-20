@@ -160,6 +160,80 @@ async fn delete_returns_deletion() {
 }
 
 #[tokio::test]
+async fn list_all_fetches_successive_pages() {
+    // A full page (offset=0) keeps the paginator live; a short page (offset=50)
+    // terminates it. `total` is null throughout, so termination relies purely on
+    // the short-page guard.
+    let server = MockServer::start().await;
+    let full: Vec<_> = (0..50)
+        .map(|i| serde_json::json!({ "id": format!("c{i}"), "name": "x" }))
+        .collect();
+
+    Mock::given(method("GET"))
+        .and(path("/contacts"))
+        .and(query_param("offset", "0"))
+        .and(query_param("limit", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "contacts": full,
+            "pagination": { "limit": 50, "offset": 0, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/contacts"))
+        .and(query_param("offset", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "contacts": [{ "id": "c50", "name": "x" }],
+            "pagination": { "limit": 50, "offset": 50, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let all = client(&server)
+        .await
+        .contacts()
+        .list_all()
+        .collect_all()
+        .await
+        .unwrap();
+    assert_eq!(all.len(), 51);
+}
+
+#[tokio::test]
+async fn malformed_body_maps_to_decode_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+        .mount(&server)
+        .await;
+
+    let err = client(&server).await.account().get().await.unwrap_err();
+    assert!(matches!(err, blooio::Error::Decode(_)));
+    // Decode is not an API error: the machine-readable accessors return None.
+    assert_eq!(err.code(), None);
+    assert_eq!(err.status(), None);
+}
+
+#[tokio::test]
+async fn connection_refused_maps_to_transport_error() {
+    // Port 1 is reserved and refuses connections immediately on localhost.
+    let client = Client::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url("http://127.0.0.1:1")
+            .with_timeout(std::time::Duration::from_secs(2)),
+    )
+    .unwrap();
+
+    let err = client.account().get().await.unwrap_err();
+    assert!(matches!(err, blooio::Error::Transport(_)));
+    assert_eq!(err.code(), None);
+    assert_eq!(err.status(), None);
+}
+
+#[tokio::test]
 async fn error_response_maps_to_api_error() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

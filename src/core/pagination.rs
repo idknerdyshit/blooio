@@ -248,4 +248,47 @@ mod tests {
         c.advance(page);
         assert!(c.done);
     }
+
+    #[test]
+    fn cursor_continues_on_full_page_without_pagination() {
+        // No `pagination` metadata: a full page must keep the cursor live so the
+        // next page is fetched. (Termination then relies on a later short/empty
+        // page, exercised by the two tests below.)
+        let mut c = Cursor::new(2);
+        let page = Page {
+            items: vec![1, 2],
+            pagination: None,
+        };
+        c.advance(page);
+        assert_eq!(c.offset, 2);
+        assert!(!c.done);
+    }
+
+    #[test]
+    fn cursor_stops_on_short_page_without_pagination() {
+        // A short page (got < limit) is the terminator when no `total` is given.
+        let mut c = Cursor::new(50);
+        let page = Page {
+            items: vec![1, 2, 3],
+            pagination: None,
+        };
+        c.advance(page);
+        assert_eq!(c.offset, 3);
+        assert!(c.done);
+    }
+
+    #[test]
+    fn cursor_stops_on_empty_page() {
+        // An empty page always terminates, even at a full-limit offset boundary
+        // with no pagination metadata. This is the guard against runaway loops.
+        let mut c = Cursor::new(2);
+        let page: Page<i32> = Page {
+            items: vec![],
+            pagination: None,
+        };
+        let items = c.advance(page);
+        assert!(items.is_empty());
+        assert_eq!(c.offset, 0);
+        assert!(c.done);
+    }
 }

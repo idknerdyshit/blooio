@@ -85,6 +85,74 @@ fn delete_returns_deletion() {
 }
 
 #[test]
+fn list_all_iterator_fetches_successive_pages() {
+    // Drives the blocking paginator through its `Iterator` impl: a full page
+    // keeps it live, a short page terminates it. `total` is null throughout.
+    let server = MockServer::start();
+    let full: Vec<_> = (0..50)
+        .map(|i| serde_json::json!({ "id": format!("c{i}"), "name": "x" }))
+        .collect();
+
+    let p1 = server.mock(|when, then| {
+        when.method(GET)
+            .path("/contacts")
+            .query_param("offset", "0")
+            .query_param("limit", "50");
+        then.status(200).json_body(serde_json::json!({
+            "contacts": full,
+            "pagination": { "limit": 50, "offset": 0, "total": null }
+        }));
+    });
+    let p2 = server.mock(|when, then| {
+        when.method(GET)
+            .path("/contacts")
+            .query_param("offset", "50");
+        then.status(200).json_body(serde_json::json!({
+            "contacts": [{ "id": "c50", "name": "x" }],
+            "pagination": { "limit": 50, "offset": 50, "total": null }
+        }));
+    });
+
+    let c = client(&server);
+    let mut total = 0usize;
+    for page in c.contacts().list_all() {
+        total += page.unwrap().len();
+    }
+    p1.assert();
+    p2.assert();
+    assert_eq!(total, 51);
+}
+
+#[test]
+fn malformed_body_maps_to_decode_error() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(GET).path("/me");
+        then.status(200).body("not json");
+    });
+
+    let err = client(&server).account().get().unwrap_err();
+    assert!(matches!(err, blooio::Error::Decode(_)));
+    assert_eq!(err.code(), None);
+    assert_eq!(err.status(), None);
+}
+
+#[test]
+fn connection_refused_maps_to_transport_error() {
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url("http://127.0.0.1:1")
+            .with_timeout(std::time::Duration::from_secs(2)),
+    )
+    .unwrap();
+
+    let err = client.account().get().unwrap_err();
+    assert!(matches!(err, blooio::Error::Transport(_)));
+    assert_eq!(err.code(), None);
+    assert_eq!(err.status(), None);
+}
+
+#[test]
 fn error_response_maps_to_api_error() {
     let server = MockServer::start();
     server.mock(|when, then| {
