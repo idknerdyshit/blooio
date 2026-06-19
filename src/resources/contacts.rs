@@ -3,7 +3,7 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{Operation, json_body, push_opt};
+use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{Contact, DeleteResponse};
@@ -157,7 +157,7 @@ impl Operation for GetContact {
     type Output = Contact;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/contacts/{}", self.contact_id)
+        format!("/contacts/{}", encode_path_segment(&self.contact_id))
     }
 }
 
@@ -175,7 +175,7 @@ impl Operation for UpdateContact {
     type Output = Contact;
     const METHOD: Method = Method::PATCH;
     fn path(&self) -> String {
-        format!("/contacts/{}", self.contact_id)
+        format!("/contacts/{}", encode_path_segment(&self.contact_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -193,7 +193,7 @@ impl Operation for DeleteContact {
     type Output = DeleteResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/contacts/{}", self.contact_id)
+        format!("/contacts/{}", encode_path_segment(&self.contact_id))
     }
 }
 
@@ -208,7 +208,10 @@ impl Operation for GetContactCapabilities {
     type Output = ContactCapabilities;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/contacts/{}/capabilities", self.contact_id)
+        format!(
+            "/contacts/{}/capabilities",
+            encode_path_segment(&self.contact_id)
+        )
     }
 }
 
@@ -223,7 +226,7 @@ impl Operation for ListContactTags {
     type Output = ContactTagsResponse;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/contacts/{}/tags", self.contact_id)
+        format!("/contacts/{}/tags", encode_path_segment(&self.contact_id))
     }
 }
 
@@ -240,7 +243,7 @@ impl Operation for AddContactTags {
     type Output = AddTagsResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/contacts/{}/tags", self.contact_id)
+        format!("/contacts/{}/tags", encode_path_segment(&self.contact_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -259,7 +262,11 @@ impl Operation for RemoveContactTag {
     type Output = DeleteResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/contacts/{}/tags/{}", self.contact_id, self.tag)
+        format!(
+            "/contacts/{}/tags/{}",
+            encode_path_segment(&self.contact_id),
+            encode_path_segment(&self.tag)
+        )
     }
 }
 

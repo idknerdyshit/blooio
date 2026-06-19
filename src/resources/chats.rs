@@ -5,7 +5,7 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{Operation, json_body, push_opt};
+use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{
@@ -212,7 +212,7 @@ impl Operation for GetChat {
     type Output = Chat;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/chats/{}", self.chat_id)
+        format!("/chats/{}", encode_path_segment(&self.chat_id))
     }
 }
 
@@ -248,7 +248,7 @@ impl Operation for ListChatMessages {
     type Output = ListChatMessagesResponse;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/chats/{}/messages", self.chat_id)
+        format!("/chats/{}/messages", encode_path_segment(&self.chat_id))
     }
     fn query(&self) -> Vec<(&'static str, String)> {
         let mut q = Vec::new();
@@ -378,7 +378,7 @@ impl Operation for SendMessage {
     type Output = SendMessageResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/chats/{}/messages", self.chat_id)
+        format!("/chats/{}/messages", encode_path_segment(&self.chat_id))
     }
     fn headers(&self) -> Vec<(&'static str, String)> {
         let key = self
@@ -404,7 +404,11 @@ impl Operation for GetMessage {
     type Output = MessageDetail;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/chats/{}/messages/{}", self.chat_id, self.message_id)
+        format!(
+            "/chats/{}/messages/{}",
+            encode_path_segment(&self.chat_id),
+            encode_path_segment(&self.message_id)
+        )
     }
 }
 
@@ -422,7 +426,8 @@ impl Operation for GetMessageStatus {
     fn path(&self) -> String {
         format!(
             "/chats/{}/messages/{}/status",
-            self.chat_id, self.message_id
+            encode_path_segment(&self.chat_id),
+            encode_path_segment(&self.message_id)
         )
     }
 }
@@ -446,7 +451,8 @@ impl Operation for AddReaction {
     fn path(&self) -> String {
         format!(
             "/chats/{}/messages/{}/reactions",
-            self.chat_id, self.message_id
+            encode_path_segment(&self.chat_id),
+            encode_path_segment(&self.message_id)
         )
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
@@ -469,7 +475,7 @@ impl Operation for SendPoll {
     type Output = SendPollResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/chats/{}/polls", self.chat_id)
+        format!("/chats/{}/polls", encode_path_segment(&self.chat_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -488,7 +494,11 @@ impl Operation for GetPollResults {
     type Output = PollResults;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/chats/{}/polls/{}", self.chat_id, self.poll_id)
+        format!(
+            "/chats/{}/polls/{}",
+            encode_path_segment(&self.chat_id),
+            encode_path_segment(&self.poll_id)
+        )
     }
 }
 
@@ -503,7 +513,7 @@ impl Operation for StartTyping {
     type Output = TypingResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/chats/{}/typing", self.chat_id)
+        format!("/chats/{}/typing", encode_path_segment(&self.chat_id))
     }
 }
 
@@ -518,7 +528,7 @@ impl Operation for StopTyping {
     type Output = TypingResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/chats/{}/typing", self.chat_id)
+        format!("/chats/{}/typing", encode_path_segment(&self.chat_id))
     }
 }
 
@@ -533,7 +543,7 @@ impl Operation for MarkChatRead {
     type Output = ReadResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/chats/{}/read", self.chat_id)
+        format!("/chats/{}/read", encode_path_segment(&self.chat_id))
     }
 }
 
@@ -548,7 +558,7 @@ impl Operation for ShareContactCard {
     type Output = ShareContactCardResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/chats/{}/contact-card", self.chat_id)
+        format!("/chats/{}/contact-card", encode_path_segment(&self.chat_id))
     }
 }
 
@@ -563,7 +573,7 @@ impl Operation for GetChatBackground {
     type Output = ChatBackgroundResponse;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/chats/{}/background", self.chat_id)
+        format!("/chats/{}/background", encode_path_segment(&self.chat_id))
     }
 }
 
@@ -580,7 +590,7 @@ impl Operation for SetChatBackground {
     type Output = ChatBackgroundResponse;
     const METHOD: Method = Method::PUT;
     fn path(&self) -> String {
-        format!("/chats/{}/background", self.chat_id)
+        format!("/chats/{}/background", encode_path_segment(&self.chat_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -598,7 +608,7 @@ impl Operation for RemoveChatBackground {
     type Output = ChatBackgroundResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/chats/{}/background", self.chat_id)
+        format!("/chats/{}/background", encode_path_segment(&self.chat_id))
     }
 }
 

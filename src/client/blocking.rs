@@ -48,12 +48,22 @@ impl BlockingClient {
         );
 
         let agent: ureq::Agent = builder.build().into();
+        Ok(Self::from_config_and_agent(config, agent))
+    }
+
+    /// Build a client from configuration and a caller-provided [`ureq::Agent`].
+    ///
+    /// This lets applications reuse an existing connection pool, proxy setup,
+    /// DNS resolver, and transport policy. The supplied agent is used as-is;
+    /// values such as [`ClientConfig::timeout`] and
+    /// [`ClientConfig::user_agent`] are not applied to it by this constructor.
+    pub fn from_config_and_agent(config: ClientConfig, agent: ureq::Agent) -> Self {
         let auth_header = Secret::new(format!("Bearer {}", config.api_key.expose()));
-        Ok(BlockingClient {
+        BlockingClient {
             config,
             agent,
             auth_header,
-        })
+        }
     }
 
     /// The configuration this client was built with.

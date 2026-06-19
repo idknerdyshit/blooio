@@ -56,3 +56,50 @@ pub fn push_opt<T: ToString>(
         q.push((key, v.to_string()));
     }
 }
+
+/// Percent-encode one URL path segment.
+///
+/// Use this for user/API-provided identifiers that are interpolated between
+/// `/` separators. Unreserved RFC 3986 characters are left untouched; every
+/// other byte is encoded so values like phone numbers, handles, tags, and
+/// provider IDs cannot alter the path structure.
+pub fn encode_path_segment(segment: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut encoded = String::new();
+    for b in segment.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(b));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(b >> 4)]));
+            encoded.push(char::from(HEX[usize::from(b & 0x0F)]));
+        }
+    }
+    encoded
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout,
+    clippy::unreadable_literal
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encode_path_segment_leaves_unreserved_chars() {
+        assert_eq!(encode_path_segment("abc-123._~"), "abc-123._~");
+    }
+
+    #[test]
+    fn encode_path_segment_escapes_reserved_and_unicode_bytes() {
+        assert_eq!(
+            encode_path_segment("+1555/a b?#☃"),
+            "%2B1555%2Fa%20b%3F%23%E2%98%83"
+        );
+    }
+}

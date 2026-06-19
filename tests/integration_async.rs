@@ -381,7 +381,10 @@ async fn webhooks_create_posts_url_and_returns_webhook_id() {
         .await
         .unwrap();
     assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
-    assert_eq!(resp.signing_secret.as_deref(), Some("sec_abc"));
+    assert_eq!(
+        resp.signing_secret.as_ref().map(|s| s.expose().as_str()),
+        Some("sec_abc")
+    );
 }
 
 #[tokio::test]
@@ -406,7 +409,10 @@ async fn webhooks_rotate_secret_posts_and_returns_new_secret() {
         .await
         .unwrap();
     assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
-    assert_eq!(resp.signing_secret.as_deref(), Some("sec_new"));
+    assert_eq!(
+        resp.signing_secret.as_ref().map(|s| s.expose().as_str()),
+        Some("sec_new")
+    );
     assert_eq!(resp.rotation_count, Some(2));
 }
 

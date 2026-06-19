@@ -37,12 +37,22 @@ impl Client {
             .user_agent(config.user_agent.clone())
             .build()
             .map_err(Error::transport)?;
+        Ok(Self::from_config_and_http_client(config, http))
+    }
+
+    /// Build a client from configuration and a caller-provided [`reqwest::Client`].
+    ///
+    /// This lets applications reuse an existing connection pool, proxy setup,
+    /// DNS resolver, and middleware-compatible timeout policy. The supplied
+    /// client is used as-is; values such as [`ClientConfig::timeout`] and
+    /// [`ClientConfig::user_agent`] are not applied to it by this constructor.
+    pub fn from_config_and_http_client(config: ClientConfig, http: reqwest::Client) -> Self {
         let auth_header = Secret::new(format!("Bearer {}", config.api_key.expose()));
-        Ok(Client {
+        Client {
             config,
             http,
             auth_header,
-        })
+        }
     }
 
     /// The configuration this client was built with.

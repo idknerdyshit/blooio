@@ -3,9 +3,10 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{Operation, json_body, push_opt};
+use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
+use crate::secret::Secret;
 use crate::types::{Webhook, WebhookLog};
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ pub struct CreateWebhookResponse {
     pub scope: Option<String>,
     pub message: Option<String>,
     pub created_at: Option<i64>,
-    pub signing_secret: Option<String>,
+    pub signing_secret: Option<Secret<String>>,
 }
 
 /// Response of `DELETE /webhooks/{webhookId}`.
@@ -49,7 +50,7 @@ pub struct DeleteWebhookResponse {
 #[non_exhaustive]
 pub struct RotateSecretResponse {
     pub webhook_id: Option<String>,
-    pub signing_secret: Option<String>,
+    pub signing_secret: Option<Secret<String>>,
     pub rotated_at: Option<i64>,
     pub rotated_by: Option<String>,
     pub rotation_count: Option<i64>,
@@ -163,7 +164,7 @@ impl Operation for GetWebhook {
     type Output = Webhook;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/webhooks/{}", self.webhook_id)
+        format!("/webhooks/{}", encode_path_segment(&self.webhook_id))
     }
 }
 
@@ -218,7 +219,7 @@ impl Operation for UpdateWebhook {
     type Output = Webhook;
     const METHOD: Method = Method::PATCH;
     fn path(&self) -> String {
-        format!("/webhooks/{}", self.webhook_id)
+        format!("/webhooks/{}", encode_path_segment(&self.webhook_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -236,7 +237,7 @@ impl Operation for DeleteWebhook {
     type Output = DeleteWebhookResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/webhooks/{}", self.webhook_id)
+        format!("/webhooks/{}", encode_path_segment(&self.webhook_id))
     }
 }
 
@@ -251,7 +252,10 @@ impl Operation for RotateWebhookSecret {
     type Output = RotateSecretResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/webhooks/{}/secret/rotate", self.webhook_id)
+        format!(
+            "/webhooks/{}/secret/rotate",
+            encode_path_segment(&self.webhook_id)
+        )
     }
 }
 
@@ -272,7 +276,7 @@ impl Operation for ListWebhookLogs {
     type Output = ListWebhookLogsResponse;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/webhooks/{}/logs", self.webhook_id)
+        format!("/webhooks/{}/logs", encode_path_segment(&self.webhook_id))
     }
     fn query(&self) -> Vec<(&'static str, String)> {
         let mut q = Vec::new();
@@ -300,7 +304,8 @@ impl Operation for ReplayWebhookEvent {
     fn path(&self) -> String {
         format!(
             "/webhooks/{}/logs/{}/replay",
-            self.webhook_id, self.event_id
+            encode_path_segment(&self.webhook_id),
+            encode_path_segment(&self.event_id)
         )
     }
 }

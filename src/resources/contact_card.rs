@@ -3,7 +3,7 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{Operation, json_body};
+use crate::core::operation::{Operation, encode_path_segment, json_body};
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
@@ -66,7 +66,10 @@ impl Operation for GetMyContactCard {
     type Output = MyContactCard;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/me/numbers/{}/contact-card", self.number)
+        format!(
+            "/me/numbers/{}/contact-card",
+            encode_path_segment(&self.number)
+        )
     }
 }
 
@@ -131,7 +134,10 @@ impl Operation for UpdateMyContactCard {
     type Output = UpdateContactCardResponse;
     const METHOD: Method = Method::PUT;
     fn path(&self) -> String {
-        format!("/me/numbers/{}/contact-card", self.number)
+        format!(
+            "/me/numbers/{}/contact-card",
+            encode_path_segment(&self.number)
+        )
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)

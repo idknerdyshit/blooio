@@ -3,7 +3,7 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
-use crate::core::operation::{Operation, json_body, push_opt};
+use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{DeleteResponse, Group, GroupIconResponse, GroupMember, Json};
@@ -160,7 +160,7 @@ impl Operation for GetGroup {
     type Output = Group;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/groups/{}", self.group_id)
+        format!("/groups/{}", encode_path_segment(&self.group_id))
     }
 }
 
@@ -178,7 +178,7 @@ impl Operation for UpdateGroup {
     type Output = Json;
     const METHOD: Method = Method::PATCH;
     fn path(&self) -> String {
-        format!("/groups/{}", self.group_id)
+        format!("/groups/{}", encode_path_segment(&self.group_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -196,7 +196,7 @@ impl Operation for DeleteGroup {
     type Output = DeleteResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/groups/{}", self.group_id)
+        format!("/groups/{}", encode_path_segment(&self.group_id))
     }
 }
 
@@ -213,7 +213,7 @@ impl Operation for SetGroupIcon {
     type Output = GroupIconResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/groups/{}/icon", self.group_id)
+        format!("/groups/{}/icon", encode_path_segment(&self.group_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -231,7 +231,7 @@ impl Operation for RemoveGroupIcon {
     type Output = GroupIconResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/groups/{}/icon", self.group_id)
+        format!("/groups/{}/icon", encode_path_segment(&self.group_id))
     }
 }
 
@@ -248,7 +248,7 @@ impl Operation for ListGroupMembers {
     type Output = ListGroupMembersResponse;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/groups/{}/members", self.group_id)
+        format!("/groups/{}/members", encode_path_segment(&self.group_id))
     }
     fn query(&self) -> Vec<(&'static str, String)> {
         let mut q = Vec::new();
@@ -271,7 +271,7 @@ impl Operation for AddGroupMember {
     type Output = AddGroupMemberResponse;
     const METHOD: Method = Method::POST;
     fn path(&self) -> String {
-        format!("/groups/{}/members", self.group_id)
+        format!("/groups/{}/members", encode_path_segment(&self.group_id))
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -290,7 +290,11 @@ impl Operation for RemoveGroupMember {
     type Output = RemoveGroupMemberResponse;
     const METHOD: Method = Method::DELETE;
     fn path(&self) -> String {
-        format!("/groups/{}/members/{}", self.group_id, self.contact_id)
+        format!(
+            "/groups/{}/members/{}",
+            encode_path_segment(&self.group_id),
+            encode_path_segment(&self.contact_id)
+        )
     }
 }
 

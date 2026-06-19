@@ -317,7 +317,10 @@ fn webhooks_create_posts_url() {
         .unwrap();
     m.assert();
     assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
-    assert_eq!(resp.signing_secret.as_deref(), Some("secret123"));
+    assert_eq!(
+        resp.signing_secret.as_ref().map(|s| s.expose().as_str()),
+        Some("secret123")
+    );
 }
 
 #[test]
@@ -336,7 +339,10 @@ fn webhooks_rotate_secret_posts_to_rotate_path() {
     let resp = client(&server).webhooks().rotate_secret("wh1").unwrap();
     m.assert();
     assert_eq!(resp.webhook_id.as_deref(), Some("wh1"));
-    assert_eq!(resp.signing_secret.as_deref(), Some("new-secret-xyz"));
+    assert_eq!(
+        resp.signing_secret.as_ref().map(|s| s.expose().as_str()),
+        Some("new-secret-xyz")
+    );
     assert_eq!(resp.rotation_count, Some(2));
 }
 

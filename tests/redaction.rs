@@ -13,6 +13,7 @@
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
+use blooio::resources::webhooks::{CreateWebhookResponse, RotateSecretResponse};
 use blooio::{Client, ClientConfig};
 use tracing_subscriber::fmt::format::FmtSpan;
 use wiremock::matchers::{method, path};
@@ -51,6 +52,38 @@ fn debug_never_reveals_key() {
     let client = Client::from_config(config).unwrap();
     let dbg_client = format!("{client:?}");
     assert!(!dbg_client.contains(SECRET_KEY));
+}
+
+#[test]
+fn webhook_signing_secrets_are_redacted_in_debug() {
+    let created: CreateWebhookResponse =
+        serde_json::from_value(serde_json::json!({ "signing_secret": "whsec-create-secret" }))
+            .unwrap();
+    let rotated: RotateSecretResponse =
+        serde_json::from_value(serde_json::json!({ "signing_secret": "whsec-rotate-secret" }))
+            .unwrap();
+
+    assert_eq!(
+        created
+            .signing_secret
+            .as_ref()
+            .map(|secret| secret.expose().as_str()),
+        Some("whsec-create-secret")
+    );
+    assert_eq!(
+        rotated
+            .signing_secret
+            .as_ref()
+            .map(|secret| secret.expose().as_str()),
+        Some("whsec-rotate-secret")
+    );
+
+    let created_dbg = format!("{created:?}");
+    let rotated_dbg = format!("{rotated:?}");
+    assert!(created_dbg.contains("[REDACTED]"));
+    assert!(rotated_dbg.contains("[REDACTED]"));
+    assert!(!created_dbg.contains("whsec-create-secret"));
+    assert!(!rotated_dbg.contains("whsec-rotate-secret"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

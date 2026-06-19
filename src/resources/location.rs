@@ -3,7 +3,7 @@
 use http::Method;
 use serde::Deserialize;
 
-use crate::core::operation::Operation;
+use crate::core::operation::{Operation, encode_path_segment};
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ impl Operation for GetLocationContact {
     type Output = crate::types::ContactLocation;
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
-        format!("/location/contacts/{}", self.handle)
+        format!("/location/contacts/{}", encode_path_segment(&self.handle))
     }
 }
 
