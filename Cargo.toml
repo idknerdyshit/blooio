@@ -9,7 +9,7 @@ repository = "https://github.com/idknerdyshit/blooio"
 keywords = ["blooio", "imessage", "sms", "api-client", "messaging"]
 categories = ["api-bindings", "web-programming::http-client"]
 readme = "README.md"
-exclude = ["CLAUDE.md"]
+exclude = ["AGENTS.md"]
 
 [features]
 default = ["async", "rustls", "webhooks", "tracing"]
