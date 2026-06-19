@@ -4,8 +4,9 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
+use crate::core::ratelimit::ResponseMeta;
 use crate::core::request::RequestSpec;
-use crate::core::response::parse;
+use crate::core::response::parse_with;
 use crate::error::{Error, Result};
 use crate::secret::Secret;
 
@@ -55,9 +56,48 @@ impl Client {
     /// here. It is also the public escape hatch for operations not covered by a
     /// convenience method.
     pub async fn send<O: Operation>(&self, op: O) -> Result<O::Output> {
-        let spec = RequestSpec::build(&op)?;
+        self.send_with_meta(op).await.map(|(out, _meta)| out)
+    }
+
+    /// Execute an [`Operation`] and decode its response, also returning the
+    /// [`ResponseMeta`] (rate-limit headers and `Retry-After`) from the HTTP
+    /// response. Use this when you want to self-pace against the API's limits.
+    pub async fn send_with_meta<O: Operation>(&self, op: O) -> Result<(O::Output, ResponseMeta)> {
+        let mut spec = RequestSpec::build(&op)?;
+        let retry = self.config.retry;
+        // A retried mutating request must be idempotent.
+        if retry.max_retries > 0 {
+            spec.ensure_idempotency_key();
+        }
         let url = self.config.url_for(&spec.path);
 
+        let mut retries_done = 0u32;
+        loop {
+            match self.send_once::<O>(&spec, &url).await {
+                Ok(v) => return Ok(v),
+                Err(e) if retry.should_retry(retries_done, &e) => {
+                    let delay = retry.delay_for(retries_done, &e);
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(
+                        attempt = retries_done + 1,
+                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        code = ?e.code(),
+                        "retrying request after transient failure"
+                    );
+                    tokio::time::sleep(delay).await;
+                    retries_done += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// A single request attempt: build, send, and decode.
+    async fn send_once<O: Operation>(
+        &self,
+        spec: &RequestSpec,
+        url: &str,
+    ) -> Result<(O::Output, ResponseMeta)> {
         #[cfg(feature = "tracing")]
         let span = tracing::info_span!(
             "blooio.request",
@@ -69,7 +109,7 @@ impl Client {
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
 
-        let mut req = self.http.request(spec.method, &url);
+        let mut req = self.http.request(spec.method.clone(), url);
         if !spec.query.is_empty() {
             req = req.query(&spec.query);
         }
@@ -78,15 +118,18 @@ impl Client {
         for (k, v) in &spec.headers {
             req = req.header(*k, v);
         }
-        if let Some(body) = spec.body {
-            req = req.header(CONTENT_TYPE, "application/json").body(body);
+        if let Some(body) = &spec.body {
+            req = req
+                .header(CONTENT_TYPE, "application/json")
+                .body(body.clone());
         }
 
         let resp = req.send().await.map_err(Error::transport)?;
         let status = resp.status().as_u16();
+        let meta = ResponseMeta::from_headers(status, resp.headers());
         let bytes = resp.bytes().await.map_err(Error::transport)?;
 
-        let result = parse(status, &bytes);
+        let result = parse_with(status, &bytes, meta.retry_after).map(|out| (out, meta));
 
         #[cfg(feature = "tracing")]
         {

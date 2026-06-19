@@ -14,13 +14,16 @@ exclude = ["AGENTS.md"]
 [features]
 default = ["async", "rustls", "webhooks", "tracing"]
 # At least one of `async` / `sync` must be enabled (compile_error! enforced in lib.rs).
-async = ["dep:reqwest"]
+async = ["dep:reqwest", "dep:tokio", "dep:futures-core", "dep:async-stream"]
 sync = ["dep:ureq"]
 # TLS backend selection. `rustls` is the default; `native-tls` is opt-in.
 rustls = ["reqwest?/rustls", "ureq?/rustls"]
 native-tls = ["reqwest?/native-tls", "ureq?/native-tls", "dep:native-tls"]
 # Webhook signature verification + typed payloads.
 webhooks = ["dep:hmac", "dep:sha2", "dep:subtle", "dep:hex"]
+# Framework extractors that verify + parse inbound webhooks. Each implies `webhooks`.
+axum = ["webhooks", "dep:axum"]
+actix = ["webhooks", "dep:actix-web"]
 # Structured tracing instrumentation on the executors (secret-redacted).
 tracing = ["dep:tracing"]
 
@@ -35,6 +38,9 @@ uuid = { version = "1", features = ["v4"] }
 tracing = { version = "0.1", optional = true }
 
 reqwest = { version = "0.13", default-features = false, features = ["json", "query"], optional = true }
+tokio = { version = "1", features = ["time"], optional = true }
+futures-core = { version = "0.3", optional = true }
+async-stream = { version = "0.3", optional = true }
 ureq = { version = "3", default-features = false, optional = true }
 native-tls = { version = "0.2", optional = true }
 
@@ -43,16 +49,34 @@ sha2 = { version = "0.11", optional = true }
 subtle = { version = "2", optional = true }
 hex = { version = "0.4", optional = true }
 
+axum = { version = "0.8", default-features = false, optional = true }
+actix-web = { version = "4", default-features = false, optional = true }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 wiremock = "0.6"
 httpmock = "0.7"
+tower = { version = "0.5", features = ["util"] }
+hmac = "0.13"
+sha2 = "0.11"
+hex = "0.4"
+actix-web = "4"
+actix-rt = "2"
 
 [[test]]
 name = "integration_async"
 required-features = ["async"]
+
+[[test]]
+name = "webhook_axum"
+required-features = ["axum"]
+
+[[test]]
+name = "webhook_actix"
+required-features = ["actix"]
 
 [[test]]
 name = "integration_sync"
@@ -65,6 +89,34 @@ required-features = ["tracing", "async"]
 [[test]]
 name = "live_smoke"
 required-features = ["async"]
+
+[[example]]
+name = "quickstart"
+required-features = ["async"]
+
+[[example]]
+name = "messaging"
+required-features = ["async"]
+
+[[example]]
+name = "pagination"
+required-features = ["async"]
+
+[[example]]
+name = "error_handling"
+required-features = ["async"]
+
+[[example]]
+name = "configuration"
+required-features = ["async", "tracing"]
+
+[[example]]
+name = "blocking"
+required-features = ["sync"]
+
+[[example]]
+name = "webhooks"
+required-features = ["webhooks"]
 
 [package.metadata.docs.rs]
 all-features = true

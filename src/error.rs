@@ -1,5 +1,7 @@
 //! Error types for the crate.
 
+use std::time::Duration;
+
 use serde::Deserialize;
 
 /// Convenience alias used throughout the crate.
@@ -24,6 +26,10 @@ pub enum Error {
         message: String,
         /// The short error label (the `error` field), if present.
         error: Option<String>,
+        /// The `Retry-After` hint (delta-seconds) if the response carried one.
+        /// Populated on throttling (`429`) and `503` responses; see
+        /// [`retry_after`](Error::retry_after).
+        retry_after: Option<Duration>,
     },
 
     /// A transport-level failure: connection, DNS, TLS, timeout, etc.
@@ -70,6 +76,31 @@ impl Error {
         match self {
             Error::Api { status, .. } => Some(*status),
             _ => None,
+        }
+    }
+
+    /// The server-advised delay before retrying, if the response carried a
+    /// `Retry-After` header expressed in delta-seconds.
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Error::Api { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
+
+    /// Whether retrying this request may succeed.
+    ///
+    /// `true` for transport failures (connection/DNS/TLS/timeout) and for the
+    /// transient API statuses `408`, `425`, `429`, and `5xx`. Encoding,
+    /// decoding, and webhook-verification errors — and 4xx other than the
+    /// listed transient ones — are not retryable.
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Error::Transport(_) => true,
+            Error::Api { status, .. } => {
+                matches!(status, 408 | 425 | 429) || (500..600).contains(status)
+            }
+            _ => false,
         }
     }
 }

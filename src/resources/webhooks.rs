@@ -463,7 +463,8 @@ impl<'c> WebhookLogs<'c, crate::Client> {
     /// A paginator over all logs for this webhook.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListWebhookLogs, ListWebhookLogs> {
+    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListWebhookLogs + use<'c>, ListWebhookLogs>
+    {
         let webhook_id = self.webhook_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListWebhookLogs {
@@ -504,8 +505,12 @@ impl<'c> WebhookLogs<'c, crate::BlockingClient> {
     /// A paginator over all logs for this webhook.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListWebhookLogs, ListWebhookLogs>
-    {
+    ) -> Paginator<
+        'c,
+        crate::BlockingClient,
+        impl Fn(u32, u32) -> ListWebhookLogs + use<'c>,
+        ListWebhookLogs,
+    > {
         let webhook_id = self.webhook_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListWebhookLogs {

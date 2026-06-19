@@ -14,12 +14,30 @@
     clippy::unreadable_literal
 )]
 
+use std::time::Duration;
+
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
 use blooio::resources::webhooks::CreateWebhook;
-use blooio::{Client, ClientConfig};
+use blooio::{Client, ClientConfig, RetryPolicy};
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// A client with fast, deterministic retries for exercising the retry loop
+/// without slowing the test suite.
+fn retrying_client(server: &MockServer, max_retries: u32) -> Client {
+    Client::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.uri())
+            .with_retry(
+                RetryPolicy::default()
+                    .with_max_retries(max_retries)
+                    .with_base_delay(Duration::from_millis(1))
+                    .with_jitter(false),
+            ),
+    )
+    .unwrap()
+}
 
 async fn client(server: &MockServer) -> Client {
     Client::from_config(ClientConfig::new("test-key").with_base_url(server.uri())).unwrap()
@@ -549,4 +567,153 @@ async fn custom_user_agent_is_sent() {
     // The mock only matches when the User-Agent header is correct; a mismatch
     // would return 404 and make this call fail.
     client.account().get().await.unwrap();
+}
+
+#[tokio::test]
+async fn retries_transient_429_then_succeeds() {
+    let server = MockServer::start().await;
+    // First attempt: 429 with a Retry-After hint. Exhausted after one match.
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "0")
+                .set_body_json(serde_json::json!({
+                    "error": "rate_limited",
+                    "code": "outbound_limit_reached"
+                })),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    // Retry lands here.
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "c1",
+            "name": "Alice"
+        })))
+        .with_priority(2)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let contact = retrying_client(&server, 2)
+        .contacts()
+        .create(CreateContact::new("+15550001111").name("Alice"))
+        .await
+        .unwrap();
+    assert_eq!(contact.id.as_deref(), Some("c1"));
+}
+
+#[tokio::test]
+async fn does_not_retry_client_error() {
+    let server = MockServer::start().await;
+    // A 400 is not retryable: exactly one request must be made.
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "bad_request",
+            "code": "invalid_number"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let err = retrying_client(&server, 3)
+        .contacts()
+        .create(CreateContact::new("nope"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.status(), Some(400));
+    assert_eq!(err.code(), Some("invalid_number"));
+}
+
+#[tokio::test]
+async fn gives_up_after_exhausting_retries() {
+    let server = MockServer::start().await;
+    // Always 503; with max_retries = 2 the client makes 3 attempts total.
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
+        .expect(3)
+        .mount(&server)
+        .await;
+
+    let err = retrying_client(&server, 2)
+        .contacts()
+        .create(CreateContact::new("+15550002222"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.status(), Some(503));
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
+}
+
+#[tokio::test]
+async fn send_with_meta_surfaces_rate_limit_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-ratelimit-limit", "100")
+                .insert_header("x-ratelimit-remaining", "42")
+                .set_body_json(serde_json::json!({ "valid": true, "user_id": "u1" })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = retrying_client(&server, 0);
+    let (me, meta) = client
+        .send_with_meta(blooio::resources::account::GetMe)
+        .await
+        .unwrap();
+    assert_eq!(me.user_id.as_deref(), Some("u1"));
+    let rl = meta.rate_limit.expect("rate-limit headers present");
+    assert_eq!(rl.limit, Some(100));
+    assert_eq!(rl.remaining, Some(42));
+}
+
+#[tokio::test]
+async fn paginator_stream_yields_items_across_pages() {
+    use futures::StreamExt;
+
+    let server = MockServer::start().await;
+    let full: Vec<_> = (0..50)
+        .map(|i| serde_json::json!({ "id": format!("c{i}"), "name": "x" }))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path("/contacts"))
+        .and(query_param("offset", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "contacts": full,
+            "pagination": { "limit": 50, "offset": 0, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/contacts"))
+        .and(query_param("offset", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "contacts": [{ "id": "c50", "name": "x" }],
+            "pagination": { "limit": 50, "offset": 50, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let c = client(&server).await;
+    let stream = c.contacts().list_all().stream();
+    futures::pin_mut!(stream);
+    let mut ids = Vec::new();
+    while let Some(item) = stream.next().await {
+        ids.push(item.unwrap().id.unwrap());
+    }
+    assert_eq!(ids.len(), 51);
+    assert_eq!(ids.first().map(String::as_str), Some("c0"));
+    assert_eq!(ids.last().map(String::as_str), Some("c50"));
 }

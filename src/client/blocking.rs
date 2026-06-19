@@ -5,8 +5,9 @@ use http::header::AUTHORIZATION;
 
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
+use crate::core::ratelimit::ResponseMeta;
 use crate::core::request::RequestSpec;
-use crate::core::response::parse;
+use crate::core::response::parse_with;
 use crate::error::{Error, Result};
 use crate::secret::Secret;
 
@@ -85,9 +86,49 @@ impl BlockingClient {
     // path only needs a borrow, but API symmetry across the two clients wins.
     #[allow(clippy::needless_pass_by_value)]
     pub fn send<O: Operation>(&self, op: O) -> Result<O::Output> {
-        let spec = RequestSpec::build(&op)?;
+        self.send_with_meta(op).map(|(out, _meta)| out)
+    }
+
+    /// Execute an [`Operation`] and decode its response, also returning the
+    /// [`ResponseMeta`] (rate-limit headers and `Retry-After`) from the HTTP
+    /// response. Use this when you want to self-pace against the API's limits.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn send_with_meta<O: Operation>(&self, op: O) -> Result<(O::Output, ResponseMeta)> {
+        let mut spec = RequestSpec::build(&op)?;
+        let retry = self.config.retry;
+        // A retried mutating request must be idempotent.
+        if retry.max_retries > 0 {
+            spec.ensure_idempotency_key();
+        }
         let url = self.config.url_for(&spec.path);
 
+        let mut retries_done = 0u32;
+        loop {
+            match self.send_once::<O>(&spec, &url) {
+                Ok(v) => return Ok(v),
+                Err(e) if retry.should_retry(retries_done, &e) => {
+                    let delay = retry.delay_for(retries_done, &e);
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(
+                        attempt = retries_done + 1,
+                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        code = ?e.code(),
+                        "retrying request after transient failure"
+                    );
+                    std::thread::sleep(delay);
+                    retries_done += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    /// A single request attempt: build, send, and decode.
+    fn send_once<O: Operation>(
+        &self,
+        spec: &RequestSpec,
+        url: &str,
+    ) -> Result<(O::Output, ResponseMeta)> {
         #[cfg(feature = "tracing")]
         let span = tracing::info_span!(
             "blooio.request",
@@ -102,11 +143,11 @@ impl BlockingClient {
         let start = std::time::Instant::now();
 
         let result = match spec.method {
-            Method::GET => self.apply(self.agent.get(&url), &spec).call(),
-            Method::DELETE => self.apply(self.agent.delete(&url), &spec).call(),
-            Method::POST => self.send_with_body(self.agent.post(&url), &spec),
-            Method::PUT => self.send_with_body(self.agent.put(&url), &spec),
-            Method::PATCH => self.send_with_body(self.agent.patch(&url), &spec),
+            Method::GET => self.apply(self.agent.get(url), spec).call(),
+            Method::DELETE => self.apply(self.agent.delete(url), spec).call(),
+            Method::POST => self.send_with_body(self.agent.post(url), spec),
+            Method::PUT => self.send_with_body(self.agent.put(url), spec),
+            Method::PATCH => self.send_with_body(self.agent.patch(url), spec),
             ref other => {
                 return Err(Error::transport(format!("unsupported HTTP method {other}")));
             }
@@ -114,9 +155,10 @@ impl BlockingClient {
 
         let mut resp = result.map_err(Error::transport)?;
         let status = resp.status().as_u16();
+        let meta = ResponseMeta::from_headers(status, resp.headers());
         let bytes = resp.body_mut().read_to_vec().map_err(Error::transport)?;
 
-        let parsed = parse(status, &bytes);
+        let parsed = parse_with(status, &bytes, meta.retry_after).map(|out| (out, meta));
 
         #[cfg(feature = "tracing")]
         {

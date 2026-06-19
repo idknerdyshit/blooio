@@ -34,11 +34,24 @@
 //! - `sync` — the [`BlockingClient`] executor (ureq), no tokio.
 //! - `rustls` *(default)* / `native-tls` — TLS backend selection.
 //! - `webhooks` *(default)* — typed payloads + HMAC signature verification.
+//! - `axum` / `actix` — webhook extractors for those frameworks (each implies
+//!   `webhooks`).
 //! - `tracing` *(default)* — secret-redacted request instrumentation.
 //!
 //! At least one of `async` / `sync` must be enabled.
+//!
+//! ## Resilience
+//!
+//! Both executors retry transient failures (transport errors and the
+//! `408`/`425`/`429`/`5xx` statuses) with jittered exponential backoff,
+//! honoring any `Retry-After` header. Tune or disable this via
+//! [`ClientConfig::with_retry`] and [`RetryPolicy`]. Mutating requests that are
+//! retried automatically carry an `Idempotency-Key`.
+//!
+//! Use `send_with_meta` (on either client) to receive [`ResponseMeta`] —
+//! rate-limit headers and `Retry-After` — alongside the decoded response, so
+//! you can pace requests against the API's limits.
 
-#![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
 
 #[cfg(not(any(feature = "async", feature = "sync")))]
@@ -57,7 +70,9 @@ pub mod webhook;
 mod client;
 
 pub use config::{ClientConfig, DEFAULT_BASE_URL};
-pub use core::{Listing, Operation, Page, Pagination, Paginator};
+pub use core::{
+    Listing, Operation, Page, Pagination, Paginator, RateLimit, ResponseMeta, RetryPolicy,
+};
 pub use error::{Error, Result};
 pub use secret::Secret;
 pub use types::*;

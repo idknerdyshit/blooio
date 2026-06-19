@@ -9,8 +9,8 @@ use crate::core::operation::{Operation, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
 use crate::types::{
-    Chat, ChatBackgroundResponse, Json, LinkPreview, Message, MessageDetail,
-    MessageStatus, ReactionResponse, ReadResponse, SendMessageResponse, TypingResponse,
+    Chat, ChatBackgroundResponse, Json, LinkPreview, Message, MessageDetail, MessageStatus,
+    ReactionResponse, ReadResponse, SendMessageResponse, TypingResponse,
 };
 
 // ===========================================================================
@@ -664,7 +664,7 @@ impl<'c> Chats<'c, crate::Client> {
     /// Paginate over all chats.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListChats, ListChats> {
+    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListChats + use<'c>, ListChats> {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListChats {
             offset: Some(offset),
             limit: Some(limit),
@@ -686,7 +686,8 @@ impl<'c> Chats<'c, crate::BlockingClient> {
     /// Paginate over all chats.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListChats, ListChats> {
+    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListChats + use<'c>, ListChats>
+    {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListChats {
             offset: Some(offset),
             limit: Some(limit),
@@ -724,7 +725,12 @@ impl<'c> Chat_<'c, crate::Client> {
     /// Paginate over all of this chat's messages.
     pub fn list_messages_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListChatMessages, ListChatMessages> {
+    ) -> Paginator<
+        'c,
+        crate::Client,
+        impl Fn(u32, u32) -> ListChatMessages + use<'c>,
+        ListChatMessages,
+    > {
         let chat_id = self.chat_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListChatMessages {
@@ -903,8 +909,12 @@ impl<'c> Chat_<'c, crate::BlockingClient> {
     /// Paginate over all of this chat's messages.
     pub fn list_messages_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListChatMessages, ListChatMessages>
-    {
+    ) -> Paginator<
+        'c,
+        crate::BlockingClient,
+        impl Fn(u32, u32) -> ListChatMessages + use<'c>,
+        ListChatMessages,
+    > {
         let chat_id = self.chat_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListChatMessages {
