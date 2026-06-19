@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-19
+
+### Added
+
+- Added retry support with configurable `RetryPolicy`, jittered backoff,
+  `Retry-After` handling, and idempotency keys for retried mutating requests.
+- Added `ResponseMeta`, `RateLimit`, and `send_with_meta` so callers can inspect
+  rate-limit and retry headers.
+- Added async paginator `Stream` support for users who prefer stream adapters
+  over `next_page` or `collect_all`.
+- Added optional `axum` and `actix` webhook extractors built around
+  `WebhookVerifier` and `VerifiedWebhook`.
+- Added usage examples for quick start, messaging, pagination, configuration,
+  error handling, blocking calls, and webhooks.
+- Added constructors for using caller-provided HTTP clients:
+  `Client::from_config_and_http_client` and
+  `BlockingClient::from_config_and_agent`.
+
+### Changed
+
+- Bumped the crate version to `0.2.0`.
+- Replaced the packaged agent metadata exclusion with `AGENTS.md`.
+
+### Fixed
+
+- Percent-encode interpolated path segments such as chat IDs, contact handles,
+  group IDs, location IDs, and webhook IDs.
+- Redact webhook signing secrets returned by create and rotate-secret responses.
+- Allow the documented stable rustdoc command to build with `--cfg docsrs`.
+- Fix paginator lifetime capture on Rust 2024.
+
 ## [0.1.0] - 2026-05-19
 
 Initial release.
@@ -35,5 +66,6 @@ Initial release.
   `blooio.request` span per request carrying method, path, status, and elapsed.
 - Dual-licensed under MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/idknerdyshit/blooio/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/idknerdyshit/blooio/releases/tag/v0.1.0

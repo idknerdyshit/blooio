@@ -10,14 +10,16 @@ from a single sans-IO core. Sync users pull no async runtime.
 
 ## Features
 
-| Feature      | Default | Description                                              |
-| ------------ | :-----: | -------------------------------------------------------- |
-| `async`      |   ✅    | The async [`Client`] executor (reqwest).                 |
-| `sync`       |         | The blocking `BlockingClient` executor (ureq), no tokio. |
-| `rustls`     |   ✅    | TLS via rustls.                                          |
-| `native-tls` |         | TLS via the system's native stack.                       |
-| `webhooks`   |   ✅    | Typed webhook payloads + HMAC signature verification.    |
-| `tracing`    |   ✅    | Secret-redacted request instrumentation.                 |
+| Feature      | Default | Description                                               |
+| ------------ | :-----: | --------------------------------------------------------- |
+| `async`      |   ✅    | The async [`Client`] executor (reqwest).                  |
+| `sync`       |         | The blocking `BlockingClient` executor (ureq), no tokio.  |
+| `rustls`     |   ✅    | TLS via rustls.                                           |
+| `native-tls` |         | TLS via the system's native stack.                        |
+| `webhooks`   |   ✅    | Typed webhook payloads + HMAC signature verification.     |
+| `axum`       |         | Verified axum webhook extractor; implies `webhooks`.      |
+| `actix`      |         | Verified actix-web webhook extractor; implies `webhooks`. |
+| `tracing`    |   ✅    | Secret-redacted request instrumentation.                  |
 
 At least one of `async` / `sync` must be enabled (enforced at compile time).
 
@@ -25,14 +27,14 @@ At least one of `async` / `sync` must be enabled (enforced at compile time).
 
 ```toml
 [dependencies]
-blooio = "0.1"
+blooio = "0.2"
 ```
 
 Blocking client only, no async runtime:
 
 ```toml
 [dependencies]
-blooio = { version = "0.1", default-features = false, features = ["sync", "rustls", "webhooks"] }
+blooio = { version = "0.2", default-features = false, features = ["sync", "rustls", "webhooks"] }
 ```
 
 ## Quick start (async)
@@ -124,6 +126,16 @@ let all = client.contacts().list_all().collect_all().await?;
 
 In the blocking client, the paginator also implements `Iterator`.
 
+With the async client, a paginator can also be converted into a `Stream`:
+
+```rust,no_run
+# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+use futures::TryStreamExt;
+
+let chats = client.chats().list_all().stream().try_collect::<Vec<_>>().await?;
+# Ok(()) }
+```
+
 ### Escape hatch
 
 Every endpoint is described once as a public [`Operation`]. Anything not covered
@@ -153,9 +165,38 @@ let client = Client::from_config(config)?;
 # Ok(()) }
 ```
 
+Applications that already own an HTTP client can reuse it:
+
+```rust,no_run
+use blooio::{Client, ClientConfig};
+
+# fn demo(http: reqwest::Client) -> blooio::Result<()> {
+let config = ClientConfig::new("my-api-key");
+let client = Client::from_config_and_http_client(config, http);
+# Ok(()) }
+```
+
 The API key is wrapped in a `Secret`, which zeroizes on drop and redacts itself
 in `Debug` output (`api_key: [REDACTED]`) — it is never logged or serialized in
 cleartext.
+
+### Retries and rate limits
+
+Transient failures are retried by default with jittered backoff. Customize that
+behavior with `ClientConfig::with_retry`, or pass `RetryPolicy::none()` to
+disable it.
+
+Use `send_with_meta` to inspect response metadata such as rate-limit headers and
+`Retry-After`:
+
+```rust,no_run
+# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+let (_account, meta) = client.send_with_meta(blooio::resources::account::GetMe).await?;
+if let Some(limit) = meta.rate_limit {
+    let remaining = limit.remaining;
+}
+# Ok(()) }
+```
 
 ## Errors
 
@@ -175,7 +216,8 @@ if err.code() == Some("outbound_limit_reached") {
 ## Webhooks
 
 With the `webhooks` feature, verify and parse incoming events. The module is
-framework-agnostic — it does not run a server:
+framework-agnostic, and the optional `axum` and `actix` features add verified
+server extractors:
 
 ```rust,no_run
 use blooio::webhook::{self, WebhookEvent};
@@ -190,6 +232,25 @@ if let Some(kind) = event.kind() {
     // dispatch on the message event kind
 }
 # Ok(()) }
+```
+
+For an axum app, put a `WebhookVerifier` in router state and accept
+`VerifiedWebhook` in the handler:
+
+```rust,no_run
+# #[cfg(feature = "axum")]
+# async fn demo() {
+use axum::{routing::post, Router};
+use blooio::webhook::{VerifiedWebhook, WebhookVerifier};
+
+async fn on_event(VerifiedWebhook(event): VerifiedWebhook) {
+    let _kind = event.kind();
+}
+
+let app = Router::new()
+    .route("/webhooks/blooio", post(on_event))
+    .with_state(WebhookVerifier::new("whsec_..."));
+# }
 ```
 
 ## Tracing
