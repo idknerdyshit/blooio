@@ -52,7 +52,6 @@
 //! rate-limit headers and `Retry-After` — alongside the decoded response, so
 //! you can pace requests against the API's limits.
 
-#![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
 
 #[cfg(not(any(feature = "async", feature = "sync")))]
