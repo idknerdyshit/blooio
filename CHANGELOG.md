@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-28
+
+### Changed
+
+- Expand tracing redaction coverage. (7a6cd4d)
+- Set MSRV to Rust 1.88. (b640ecd)
+
 ## [0.2.0] - 2026-06-19
 
 ### Added
@@ -66,6 +73,7 @@ Initial release.
   `blooio.request` span per request carrying method, path, status, and elapsed.
 - Dual-licensed under MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/idknerdyshit/blooio/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/idknerdyshit/blooio/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/idknerdyshit/blooio/releases/tag/v0.1.0
