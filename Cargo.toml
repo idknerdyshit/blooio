@@ -2,6 +2,7 @@
 name = "blooio"
 version = "0.2.0"
 edition = "2024"
+rust-version = "1.88"
 authors = ["Sara <sara@idknerdyshit.com>"]
 description = "Typed, low-overhead Rust client for the Blooio API (iMessage/SMS automation), with sync and async surfaces."
 license = "MIT OR Apache-2.0"
