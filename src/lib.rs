@@ -38,7 +38,8 @@
 //!   `webhooks`).
 //! - `tracing` *(default)* — secret-redacted request instrumentation.
 //!
-//! At least one of `async` / `sync` must be enabled.
+//! At least one of `async` / `sync` / `webhooks` must be enabled. A
+//! webhooks-only build does not compile either HTTP client executor.
 //!
 //! ## Resilience
 //!
@@ -54,22 +55,29 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(not(any(feature = "async", feature = "sync")))]
-compile_error!("blooio: enable at least one of the `async` or `sync` features");
+#[cfg(not(any(feature = "async", feature = "sync", feature = "webhooks")))]
+compile_error!("blooio: enable at least one of the `async`, `sync`, or `webhooks` features");
 
-pub mod config;
-pub mod core;
 pub mod error;
-pub mod resources;
 pub mod secret;
 pub mod types;
+
+#[cfg(any(feature = "async", feature = "sync"))]
+pub mod config;
+#[cfg(any(feature = "async", feature = "sync"))]
+pub mod core;
+#[cfg(any(feature = "async", feature = "sync"))]
+pub mod resources;
 
 #[cfg(feature = "webhooks")]
 pub mod webhook;
 
+#[cfg(any(feature = "async", feature = "sync"))]
 mod client;
 
+#[cfg(any(feature = "async", feature = "sync"))]
 pub use config::{ClientConfig, DEFAULT_BASE_URL};
+#[cfg(any(feature = "async", feature = "sync"))]
 pub use core::{
     Listing, Operation, Page, Pagination, Paginator, RateLimit, ResponseMeta, RetryPolicy,
 };

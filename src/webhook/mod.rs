@@ -14,13 +14,71 @@ pub mod actix;
 #[cfg(feature = "axum")]
 pub mod axum;
 
-pub use signature::{DEFAULT_TOLERANCE_SECS, VerifyError, verify, verify_at, verify_default};
+pub use signature::{
+    DEFAULT_TOLERANCE_SECS, SignatureHeader, VerifyError, verify, verify_at, verify_default,
+    verify_preparsed,
+};
 
 #[cfg(any(feature = "axum", feature = "actix"))]
-pub use server::{DEFAULT_SIGNATURE_HEADER, VerifiedWebhook, WebhookRejection, WebhookVerifier};
+pub use server::{
+    DEFAULT_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook, WebhookRejection,
+    WebhookVerificationResolver, WebhookVerifier, X_BLOOIO_SIGNATURE_HEADER,
+};
+
+use serde::Deserialize;
 
 use crate::error::{Error, Result};
 pub use crate::types::WebhookEventPayload;
+
+/// Untrusted routing fields extracted from a raw webhook body.
+///
+/// Use this only to decide how to find the correct signing secret; verify the
+/// body before trusting the values.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct WebhookPeek {
+    /// The raw event name, such as `message.received`.
+    pub event: Option<String>,
+    /// The message protocol, such as `sms`.
+    pub protocol: Option<String>,
+    /// The provider message id.
+    pub message_id: Option<String>,
+    /// The receiving phone number or internal identifier.
+    pub internal_id: Option<String>,
+}
+
+/// A verified inbound SMS event projected into the fields most handlers need.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceivedSms {
+    /// The provider message id.
+    pub message_id: String,
+    /// The sender phone number or handle.
+    pub sender: String,
+    /// The receiving phone number or internal identifier.
+    pub internal_id: String,
+    /// The inbound text. Missing/null text is represented as an empty string.
+    pub text: String,
+}
+
+/// Why a parsed webhook could not be converted into a received SMS.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WebhookConversionError {
+    #[error("webhook event is not message.received")]
+    WrongEvent { event: Option<String> },
+    #[error("webhook protocol is not sms")]
+    WrongProtocol { protocol: Option<String> },
+    #[error("webhook payload is missing required field {0}")]
+    MissingField(&'static str),
+}
+
+/// Extract untrusted routing fields from a raw webhook body.
+///
+/// This is intentionally a "peek": use it before verification only to choose
+/// which signing secret to verify with.
+pub fn peek(raw_body: &[u8]) -> Result<WebhookPeek> {
+    serde_json::from_slice(raw_body).map_err(Error::decode)
+}
 
 /// The kind of message event, with a raw fallback for forward-compatibility.
 #[allow(missing_docs)]
@@ -79,6 +137,46 @@ impl WebhookEvent {
             .as_deref()
             .map(MessageEventKind::from_event)
     }
+
+    /// Convert this event into a received SMS payload.
+    ///
+    /// The conversion requires a case-insensitive `message.received` event and
+    /// `sms` protocol. `message_id`, `sender`, and `internal_id` must be
+    /// present and non-empty; `text` defaults to an empty string.
+    pub fn try_into_received_sms(self) -> std::result::Result<ReceivedSms, WebhookConversionError> {
+        let payload = self.payload;
+        let event = payload.event;
+        if !event
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("message.received"))
+        {
+            return Err(WebhookConversionError::WrongEvent { event });
+        }
+
+        let protocol = payload.protocol;
+        if !protocol
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("sms"))
+        {
+            return Err(WebhookConversionError::WrongProtocol { protocol });
+        }
+
+        Ok(ReceivedSms {
+            message_id: required(payload.message_id, "message_id")?,
+            sender: required(payload.sender, "sender")?,
+            internal_id: required(payload.internal_id, "internal_id")?,
+            text: payload.text.unwrap_or_default(),
+        })
+    }
+}
+
+fn required(
+    value: Option<String>,
+    field: &'static str,
+) -> std::result::Result<String, WebhookConversionError> {
+    value
+        .filter(|value| !value.is_empty())
+        .ok_or(WebhookConversionError::MissingField(field))
 }
 
 #[cfg(test)]
@@ -186,5 +284,77 @@ mod tests {
         let raw = br#"{"event":"message.received","brand_new_field":{"x":1},"message_id":"m5"}"#;
         let ev = WebhookEvent::parse(raw).unwrap();
         assert_eq!(ev.payload.message_id.as_deref(), Some("m5"));
+    }
+
+    #[test]
+    fn peek_extracts_routing_fields_only() {
+        let raw = br#"{"event":"message.received","protocol":"sms","message_id":"m1","internal_id":"+15550001111","ignored":{"x":1}}"#;
+        let peeked = peek(raw).unwrap();
+        assert_eq!(
+            peeked,
+            WebhookPeek {
+                event: Some("message.received".into()),
+                protocol: Some("sms".into()),
+                message_id: Some("m1".into()),
+                internal_id: Some("+15550001111".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn converts_received_sms_case_insensitively() {
+        let raw = br#"{"event":"MESSAGE.RECEIVED","protocol":"SMS","message_id":"m1","sender":"+15550002222","internal_id":"+15550001111","text":"hi"}"#;
+        let sms = WebhookEvent::parse(raw)
+            .unwrap()
+            .try_into_received_sms()
+            .unwrap();
+        assert_eq!(
+            sms,
+            ReceivedSms {
+                message_id: "m1".into(),
+                sender: "+15550002222".into(),
+                internal_id: "+15550001111".into(),
+                text: "hi".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn received_sms_text_defaults_to_empty() {
+        let raw = br#"{"event":"message.received","protocol":"sms","message_id":"m1","sender":"+15550002222","internal_id":"+15550001111"}"#;
+        let sms = WebhookEvent::parse(raw)
+            .unwrap()
+            .try_into_received_sms()
+            .unwrap();
+        assert_eq!(sms.text, "");
+    }
+
+    #[test]
+    fn received_sms_rejects_wrong_event_and_protocol() {
+        let wrong_event = br#"{"event":"message.sent","protocol":"sms","message_id":"m1","sender":"s","internal_id":"i"}"#;
+        assert!(matches!(
+            WebhookEvent::parse(wrong_event)
+                .unwrap()
+                .try_into_received_sms(),
+            Err(WebhookConversionError::WrongEvent { .. })
+        ));
+
+        let wrong_protocol = br#"{"event":"message.received","protocol":"imessage","message_id":"m1","sender":"s","internal_id":"i"}"#;
+        assert!(matches!(
+            WebhookEvent::parse(wrong_protocol)
+                .unwrap()
+                .try_into_received_sms(),
+            Err(WebhookConversionError::WrongProtocol { .. })
+        ));
+    }
+
+    #[test]
+    fn received_sms_requires_core_fields() {
+        let raw =
+            br#"{"event":"message.received","protocol":"sms","message_id":"m1","sender":"s"}"#;
+        assert_eq!(
+            WebhookEvent::parse(raw).unwrap().try_into_received_sms(),
+            Err(WebhookConversionError::MissingField("internal_id"))
+        );
     }
 }

@@ -6,14 +6,18 @@
 //! [`WebhookVerifier::verify_and_parse`].
 
 use std::borrow::Cow;
+use std::future::Future;
 
 use crate::error::Error;
 use crate::secret::Secret;
 use crate::webhook::WebhookEvent;
-use crate::webhook::signature::{self, DEFAULT_TOLERANCE_SECS, VerifyError};
+use crate::webhook::signature::{self, DEFAULT_TOLERANCE_SECS, SignatureHeader, VerifyError};
 
 /// Default header name carrying the `t=…,v1=…` signature.
 pub const DEFAULT_SIGNATURE_HEADER: &str = "Blooio-Signature";
+
+/// Alternate signature header name used by Blooio webhook deliveries.
+pub const X_BLOOIO_SIGNATURE_HEADER: &str = "x-blooio-signature";
 
 /// Holds the webhook signing secret (and verification options) so that the
 /// framework extractors can authenticate and parse an inbound request in one
@@ -65,6 +69,17 @@ impl WebhookVerifier {
         &self.header_name
     }
 
+    /// The alternate header name accepted by default extractors, if any.
+    ///
+    /// When the verifier uses the default [`DEFAULT_SIGNATURE_HEADER`],
+    /// extractors also accept [`X_BLOOIO_SIGNATURE_HEADER`]. Custom header
+    /// names are treated as exact overrides.
+    pub fn alternate_header_name(&self) -> Option<&'static str> {
+        self.header_name
+            .eq_ignore_ascii_case(DEFAULT_SIGNATURE_HEADER)
+            .then_some(X_BLOOIO_SIGNATURE_HEADER)
+    }
+
     /// Verify a signature header against `body` and, on success, parse the body
     /// into a [`WebhookEvent`].
     ///
@@ -83,6 +98,39 @@ impl WebhookVerifier {
     }
 }
 
+/// Application-owned dynamic webhook verifier.
+///
+/// Implement this when the signing secret must be selected from information in
+/// the request body. The resolver receives the parsed signature and raw body,
+/// so it can check timestamp tolerance, peek at untrusted routing fields, look
+/// up the correct secret, verify with
+/// [`verify_preparsed`](crate::webhook::verify_preparsed), and return any
+/// application context that should reach the handler.
+pub trait WebhookVerificationResolver {
+    /// Context returned to the handler after verification succeeds.
+    type Context;
+    /// Application error/rejection type.
+    type Error;
+    /// Future returned by [`verify`](Self::verify).
+    type Future<'a>: Future<Output = std::result::Result<Self::Context, Self::Error>> + Send + 'a
+    where
+        Self: 'a;
+
+    /// Verify this request and return handler context.
+    fn verify<'a>(&'a self, signature: &'a SignatureHeader, raw_body: &'a [u8])
+    -> Self::Future<'a>;
+}
+
+/// The successfully verified and parsed webhook plus resolver-provided
+/// application context.
+#[derive(Debug, Clone)]
+pub struct ResolvedWebhook<R: WebhookVerificationResolver> {
+    /// The parsed webhook event.
+    pub event: WebhookEvent,
+    /// Context returned by the resolver.
+    pub context: R::Context,
+}
+
 /// The successfully verified and parsed webhook, produced by the framework
 /// extractors. Destructure it to reach the inner [`WebhookEvent`].
 #[derive(Debug, Clone)]
@@ -93,6 +141,9 @@ pub struct VerifiedWebhook(pub WebhookEvent);
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum WebhookRejection {
+    /// The framework extractor was used without registering a verifier or
+    /// resolver in application state.
+    MissingVerifier,
     /// The signature header was absent.
     MissingSignature,
     /// The signature was present but did not verify (bad HMAC, malformed
@@ -109,6 +160,7 @@ impl WebhookRejection {
     /// missing/invalid signatures, `400` for an unreadable or unparseable body.
     pub fn status_code(&self) -> u16 {
         match self {
+            WebhookRejection::MissingVerifier => 500,
             WebhookRejection::MissingSignature | WebhookRejection::InvalidSignature(_) => 401,
             WebhookRejection::Malformed(_) | WebhookRejection::BodyRead(_) => 400,
         }
@@ -118,6 +170,7 @@ impl WebhookRejection {
 impl std::fmt::Display for WebhookRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            WebhookRejection::MissingVerifier => f.write_str("webhook verifier not configured"),
             WebhookRejection::MissingSignature => f.write_str("missing webhook signature header"),
             WebhookRejection::InvalidSignature(e) => write!(f, "invalid webhook signature: {e}"),
             WebhookRejection::Malformed(e) => write!(f, "malformed webhook body: {e}"),
@@ -129,7 +182,9 @@ impl std::fmt::Display for WebhookRejection {
 impl std::error::Error for WebhookRejection {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            WebhookRejection::MissingSignature | WebhookRejection::BodyRead(_) => None,
+            WebhookRejection::MissingVerifier
+            | WebhookRejection::MissingSignature
+            | WebhookRejection::BodyRead(_) => None,
             WebhookRejection::InvalidSignature(e) => Some(e),
             WebhookRejection::Malformed(e) => Some(e),
         }
@@ -198,10 +253,20 @@ mod tests {
             "Blooio-Signature"
         );
         assert_eq!(
+            WebhookVerifier::new(SECRET).alternate_header_name(),
+            Some("x-blooio-signature")
+        );
+        assert_eq!(
             WebhookVerifier::new(SECRET)
                 .with_header_name("X-Sig")
                 .header_name(),
             "X-Sig"
+        );
+        assert_eq!(
+            WebhookVerifier::new(SECRET)
+                .with_header_name("X-Sig")
+                .alternate_header_name(),
+            None
         );
     }
 

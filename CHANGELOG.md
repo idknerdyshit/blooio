@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added webhooks-only builds, public parsed signature primitives, preparsed
+  verification, webhook body peeking, received-SMS conversion, and dynamic
+  Axum/Actix webhook verification resolvers.
+- Added support for both `Blooio-Signature` and `x-blooio-signature` in the
+  default framework extractors.
+
 ## [0.2.1] - 2026-06-28
 
 ### Changed

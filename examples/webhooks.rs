@@ -6,32 +6,39 @@
 //! cargo run --example webhooks
 //! ```
 //!
-//! In a real handler, `secret` comes from your webhook's signing secret,
-//! `signature_header` from the `Blooio-Signature` request header, and `body`
-//! is the raw, unparsed request body. Always verify *before* trusting the
-//! payload.
+//! In a real handler, `signature_header` comes from either `Blooio-Signature`
+//! or `x-blooio-signature`, and `body` is the raw, unparsed request body.
+//! Always verify *before* trusting the payload.
 
 #![allow(clippy::print_stdout)]
 
-use blooio::webhook::{MessageEventKind, WebhookEvent, verify_at, verify_default};
+use blooio::webhook::{
+    DEFAULT_TOLERANCE_SECS, MessageEventKind, SignatureHeader, WebhookEvent, peek, verify_preparsed,
+};
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let secret = b"whsec_example_secret";
-    let body = br#"{"event":"message.received","message_id":"m_123","text":"Hi there!","sender":"+15555550123"}"#;
+    let body = br#"{"event":"message.received","protocol":"sms","message_id":"m_123","internal_id":"+15555550100","text":"Hi there!","sender":"+15555550123"}"#;
 
-    // A `t=<unix>,v1=<hex-hmac>` header, as Blooio sends it.
-    let signature_header =
-        "t=1700000000,v1=a031050aeb41a7ef072aefefdece109e8ca7db26d85348b8b64a911dac4e2987";
+    // A `t=<unix>,v1=<hex-hmac>` header, as Blooio sends it. We generate it
+    // locally so this example stays deterministic and offline.
+    let timestamp = 1_700_000_000;
+    let signature_header = sign(secret, timestamp, body)?;
 
-    // Production code calls `verify_default`, which checks the signature *and*
-    // that the timestamp is within ~5 minutes of now (replay protection):
-    //
-    //     verify_default(secret, signature_header, body)?;
-    //
-    // Here we pin "now" to the signed timestamp via `verify_at` so the fixed
-    // vector above verifies deterministically regardless of the wall clock.
-    let _ = verify_default; // (referenced for the doc note above)
-    verify_at(secret, signature_header, body, 300, 1_700_000_000)?;
+    // Apps with org-specific webhook secrets can parse and precheck the
+    // timestamp before choosing the secret.
+    let signature = SignatureHeader::parse(&signature_header)?;
+    signature.check_tolerance(timestamp, DEFAULT_TOLERANCE_SECS)?;
+
+    // Peek is intentionally untrusted: use it only to select the secret.
+    let peek = peek(body)?;
+    println!("routing internal_id: {:?}", peek.internal_id);
+
+    verify_preparsed(secret, &signature, body)?;
     println!("signature OK");
 
     // Only now is it safe to parse and act on the payload.
@@ -50,12 +57,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None => println!("payload carried no event field"),
     }
 
+    let sms = event.try_into_received_sms()?;
+    println!("received SMS {} from {}", sms.message_id, sms.sender);
+
     // Tampering invalidates the signature — verification fails closed.
     let tampered = br#"{"event":"message.received","text":"gotcha"}"#;
-    match verify_at(secret, signature_header, tampered, 300, 1_700_000_000) {
+    match verify_preparsed(secret, &signature, tampered) {
         Ok(()) => println!("unexpected: tampered body verified"),
         Err(e) => println!("tampered body rejected: {e}"),
     }
 
     Ok(())
+}
+
+fn sign(secret: &[u8], timestamp: i64, body: &[u8]) -> Result<String, hmac::digest::InvalidLength> {
+    let mut mac = HmacSha256::new_from_slice(secret)?;
+    mac.update(timestamp.to_string().as_bytes());
+    mac.update(b".");
+    mac.update(body);
+    Ok(format!(
+        "t={timestamp},v1={}",
+        hex::encode(mac.finalize().into_bytes())
+    ))
 }

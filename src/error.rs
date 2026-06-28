@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+#[cfg(any(feature = "async", feature = "sync"))]
 use serde::Deserialize;
 
 /// Convenience alias used throughout the crate.
@@ -51,10 +52,12 @@ pub enum Error {
 }
 
 impl Error {
+    #[cfg(any(feature = "async", feature = "sync"))]
     pub(crate) fn transport(e: impl std::fmt::Display) -> Self {
         Error::Transport(e.to_string())
     }
 
+    #[cfg(any(feature = "async", feature = "sync"))]
     pub(crate) fn encode(e: impl std::fmt::Display) -> Self {
         Error::Encode(e.to_string())
     }
@@ -106,6 +109,7 @@ impl Error {
 }
 
 /// Wire shape of the Blooio `Error` schema: `{ error, message, status, code }`.
+#[cfg(any(feature = "async", feature = "sync"))]
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct ApiErrorBody {
     pub error: Option<String>,

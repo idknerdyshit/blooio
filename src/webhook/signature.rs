@@ -33,35 +33,61 @@ pub enum VerifyError {
 }
 
 /// Parsed components of a signature header.
-struct Header {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureHeader {
     timestamp: i64,
     signatures: Vec<Vec<u8>>,
 }
 
-fn parse_header(value: &str) -> Result<Header, VerifyError> {
-    let mut timestamp: Option<i64> = None;
-    let mut signatures = Vec::new();
-    for part in value.split(',') {
-        let (k, v) = part.split_once('=').ok_or(VerifyError::MalformedHeader)?;
-        match k.trim() {
-            "t" => {
-                timestamp = Some(v.trim().parse().map_err(|_| VerifyError::MalformedHeader)?);
+impl SignatureHeader {
+    /// Parse a raw signature header value.
+    ///
+    /// The expected form is `t=<unix_seconds>,v1=<hex_hmac>`. Unknown schemes
+    /// are ignored for forward compatibility, and multiple `v1` signatures are
+    /// accepted.
+    pub fn parse(value: &str) -> Result<Self, VerifyError> {
+        let mut timestamp: Option<i64> = None;
+        let mut signatures = Vec::new();
+        for part in value.split(',') {
+            let (k, v) = part.split_once('=').ok_or(VerifyError::MalformedHeader)?;
+            match k.trim() {
+                "t" => {
+                    timestamp = Some(v.trim().parse().map_err(|_| VerifyError::MalformedHeader)?);
+                }
+                "v1" => {
+                    let raw = hex::decode(v.trim()).map_err(|_| VerifyError::MalformedHeader)?;
+                    signatures.push(raw);
+                }
+                _ => {} // ignore unknown schemes for forward-compat
             }
-            "v1" => {
-                let raw = hex::decode(v.trim()).map_err(|_| VerifyError::MalformedHeader)?;
-                signatures.push(raw);
-            }
-            _ => {} // ignore unknown schemes for forward-compat
+        }
+        let timestamp = timestamp.ok_or(VerifyError::MalformedHeader)?;
+        if signatures.is_empty() {
+            return Err(VerifyError::MalformedHeader);
+        }
+        Ok(SignatureHeader {
+            timestamp,
+            signatures,
+        })
+    }
+
+    /// The signed Unix timestamp from the header.
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
+    /// Check that this signature timestamp is within `tolerance_secs` of
+    /// caller-supplied Unix timestamp `now`.
+    pub fn check_tolerance(&self, now: i64, tolerance_secs: u64) -> Result<(), VerifyError> {
+        if now.abs_diff(self.timestamp) > tolerance_secs {
+            Err(VerifyError::TimestampOutOfTolerance {
+                timestamp: self.timestamp,
+                tolerance: tolerance_secs,
+            })
+        } else {
+            Ok(())
         }
     }
-    let timestamp = timestamp.ok_or(VerifyError::MalformedHeader)?;
-    if signatures.is_empty() {
-        return Err(VerifyError::MalformedHeader);
-    }
-    Ok(Header {
-        timestamp,
-        signatures,
-    })
 }
 
 fn now_unix() -> i64 {
@@ -101,15 +127,22 @@ pub fn verify_at(
     tolerance: u64,
     now: i64,
 ) -> Result<(), VerifyError> {
-    let header = parse_header(header_value)?;
+    let header = SignatureHeader::parse(header_value)?;
+    header.check_tolerance(now, tolerance)?;
+    verify_preparsed(secret, &header, raw_body)
+}
 
-    if (now - header.timestamp).unsigned_abs() > tolerance {
-        return Err(VerifyError::TimestampOutOfTolerance {
-            timestamp: header.timestamp,
-            tolerance,
-        });
-    }
-
+/// Verify a webhook signature that has already been parsed and timestamp
+/// checked.
+///
+/// This is useful when an application needs to parse the signature, perform
+/// replay protection, inspect untrusted routing fields, look up the
+/// org-specific secret, and only then verify the HMAC.
+pub fn verify_preparsed(
+    secret: &[u8],
+    header: &SignatureHeader,
+    raw_body: &[u8],
+) -> Result<(), VerifyError> {
     let mut mac = HmacSha256::new_from_slice(secret).map_err(|_| VerifyError::MalformedHeader)?;
     mac.update(header.timestamp.to_string().as_bytes());
     mac.update(b".");
@@ -154,6 +187,51 @@ mod tests {
     fn valid_signature_passes() {
         let body = br#"{"event":"message.received"}"#;
         let header = sign(1_700_000_000, body);
+        assert!(verify_at(SECRET, &header, body, 300, 1_700_000_000).is_ok());
+    }
+
+    #[test]
+    fn parses_header_and_exposes_timestamp() {
+        let body = b"{}";
+        let header = sign(1_700_000_000, body);
+        let parsed = SignatureHeader::parse(&header).unwrap();
+        assert_eq!(parsed.timestamp(), 1_700_000_000);
+        assert_eq!(parsed.signatures.len(), 1);
+    }
+
+    #[test]
+    fn tolerance_check_is_separate_from_hmac_verification() {
+        let body = b"{}";
+        let header = sign(1_700_000_000, body);
+        let parsed = SignatureHeader::parse(&header).unwrap();
+        assert!(parsed.check_tolerance(1_700_000_299, 300).is_ok());
+        assert_eq!(
+            parsed.check_tolerance(1_700_000_301, 300),
+            Err(VerifyError::TimestampOutOfTolerance {
+                timestamp: 1_700_000_000,
+                tolerance: 300,
+            })
+        );
+    }
+
+    #[test]
+    fn verify_preparsed_checks_hmac_without_rechecking_tolerance() {
+        let body = b"{}";
+        let header = sign(1_700_000_000, body);
+        let parsed = SignatureHeader::parse(&header).unwrap();
+        assert!(verify_preparsed(SECRET, &parsed, body).is_ok());
+        assert_eq!(
+            verify_preparsed(b"other", &parsed, body),
+            Err(VerifyError::Mismatch)
+        );
+    }
+
+    #[test]
+    fn multiple_v1_signatures_are_accepted() {
+        let body = b"{}";
+        let good = sign(1_700_000_000, body);
+        let good_sig = good.split_once("v1=").unwrap().1;
+        let header = format!("t=1700000000,v1=deadbeef,v1={good_sig}");
         assert!(verify_at(SECRET, &header, body, 300, 1_700_000_000).is_ok());
     }
 

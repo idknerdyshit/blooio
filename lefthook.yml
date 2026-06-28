@@ -1,0 +1,8 @@
+pre-push:
+  commands:
+    fmt:
+      run: cargo fmt --all --check
+    clippy-all-features:
+      run: cargo clippy --all-features --all-targets -- -D warnings
+    clippy-sync-webhooks:
+      run: cargo clippy --no-default-features --features sync,webhooks --all-targets -- -D warnings

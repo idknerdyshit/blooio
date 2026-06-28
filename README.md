@@ -16,12 +16,13 @@ from a single sans-IO core. Sync users pull no async runtime.
 | `sync`       |         | The blocking `BlockingClient` executor (ureq), no tokio.  |
 | `rustls`     |   ✅    | TLS via rustls.                                           |
 | `native-tls` |         | TLS via the system's native stack.                        |
-| `webhooks`   |   ✅    | Typed webhook payloads + HMAC signature verification.     |
+| `webhooks`   |   ✅    | Typed webhook payloads + HMAC signature verification, usable without HTTP clients. |
 | `axum`       |         | Verified axum webhook extractor; implies `webhooks`.      |
 | `actix`      |         | Verified actix-web webhook extractor; implies `webhooks`. |
 | `tracing`    |   ✅    | Secret-redacted request instrumentation.                  |
 
-At least one of `async` / `sync` must be enabled (enforced at compile time).
+At least one of `async` / `sync` / `webhooks` must be enabled (enforced at
+compile time).
 
 ## Install
 
@@ -35,6 +36,13 @@ Blocking client only, no async runtime:
 ```toml
 [dependencies]
 blooio = { version = "0.2", default-features = false, features = ["sync", "rustls", "webhooks"] }
+```
+
+Webhook parsing and verification only, no Blooio API HTTP client:
+
+```toml
+[dependencies]
+blooio = { version = "0.2", default-features = false, features = ["webhooks"] }
 ```
 
 ## Quick start (async)
@@ -233,6 +241,36 @@ if let Some(kind) = event.kind() {
 }
 # Ok(()) }
 ```
+
+If the webhook secret depends on fields inside the payload, parse the signature
+first, check timestamp freshness, peek only the untrusted routing fields, then
+verify with the resolved secret:
+
+```rust,no_run
+use blooio::webhook::{
+    self, DEFAULT_TOLERANCE_SECS, SignatureHeader, WebhookEvent,
+};
+
+# fn now() -> i64 { 1_700_000_000 }
+# fn lookup_secret(_internal_id: &str) -> Option<Vec<u8>> { Some(b"whsec".to_vec()) }
+# fn handle(sig_header: &str, raw_body: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+let sig = SignatureHeader::parse(sig_header)?;
+sig.check_tolerance(now(), DEFAULT_TOLERANCE_SECS)?;
+
+let peek = webhook::peek(raw_body)?;
+let Some(secret) = peek.internal_id.as_deref().and_then(lookup_secret) else {
+    return Ok(());
+};
+
+webhook::verify_preparsed(&secret, &sig, raw_body)?;
+let sms = WebhookEvent::parse(raw_body)?.try_into_received_sms()?;
+let _sender = sms.sender;
+# Ok(()) }
+```
+
+The built-in extractors accept both `Blooio-Signature` and
+`x-blooio-signature` by default. Use `WebhookVerifier::with_header_name` to
+replace that default lookup with a custom header.
 
 For an axum app, put a `WebhookVerifier` in router state and accept
 `VerifiedWebhook` in the handler:

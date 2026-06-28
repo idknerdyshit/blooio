@@ -14,9 +14,16 @@ exclude = ["AGENTS.md"]
 
 [features]
 default = ["async", "rustls", "webhooks", "tracing"]
-# At least one of `async` / `sync` must be enabled (compile_error! enforced in lib.rs).
-async = ["dep:reqwest", "dep:tokio", "dep:futures-core", "dep:async-stream"]
-sync = ["dep:ureq"]
+# At least one of `async` / `sync` / `webhooks` must be enabled (compile_error! enforced in lib.rs).
+async = [
+  "dep:reqwest",
+  "dep:tokio",
+  "dep:futures-core",
+  "dep:async-stream",
+  "dep:http",
+  "dep:uuid",
+]
+sync = ["dep:ureq", "dep:http", "dep:uuid"]
 # TLS backend selection. `rustls` is the default; `native-tls` is opt-in.
 rustls = ["reqwest?/rustls", "ureq?/rustls"]
 native-tls = ["reqwest?/native-tls", "ureq?/native-tls", "dep:native-tls"]
@@ -31,10 +38,10 @@ tracing = ["dep:tracing"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-http = "1"
+http = { version = "1", optional = true }
 thiserror = "2"
 zeroize = { version = "1", features = ["zeroize_derive"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 tracing = { version = "0.1", optional = true }
 
@@ -85,6 +92,10 @@ required-features = ["sync"]
 
 [[test]]
 name = "redaction"
+required-features = ["tracing"]
+
+[[test]]
+name = "redaction_client"
 required-features = ["tracing"]
 
 [[test]]
@@ -141,6 +152,21 @@ unimplemented = "warn"
 dbg_macro     = "warn"
 print_stdout  = "warn"
 print_stderr  = "warn"
+
+# Hand-picked restriction lints that catch high-signal library mistakes without
+# enabling the noisy full restriction group.
+empty_drop               = "warn"
+exit                     = "warn"
+let_underscore_must_use  = "warn"
+mem_forget               = "warn"
+mutex_atomic             = "warn"
+mutex_integer            = "warn"
+panic_in_result_fn       = "warn"
+rc_buffer                = "warn"
+rc_mutex                 = "warn"
+try_err                  = "warn"
+unused_result_ok         = "warn"
+unwrap_in_result         = "warn"
 
 module_name_repetitions = "allow"
 must_use_candidate      = "allow"
