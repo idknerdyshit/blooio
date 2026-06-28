@@ -28,21 +28,21 @@ compile time).
 
 ```toml
 [dependencies]
-blooio = "0.2"
+blooio = "0.3"
 ```
 
 Blocking client only, no async runtime:
 
 ```toml
 [dependencies]
-blooio = { version = "0.2", default-features = false, features = ["sync", "rustls", "webhooks"] }
+blooio = { version = "0.3", default-features = false, features = ["sync", "rustls", "webhooks"] }
 ```
 
 Webhook parsing and verification only, no Blooio API HTTP client:
 
 ```toml
 [dependencies]
-blooio = { version = "0.2", default-features = false, features = ["webhooks"] }
+blooio = { version = "0.3", default-features = false, features = ["webhooks"] }
 ```
 
 ## Quick start (async)

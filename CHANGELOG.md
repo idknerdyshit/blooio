@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-28
+
 ### Added
 
 - Added webhooks-only builds, public parsed signature primitives, preparsed
@@ -81,7 +83,8 @@ Initial release.
   `blooio.request` span per request carrying method, path, status, and elapsed.
 - Dual-licensed under MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/idknerdyshit/blooio/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/idknerdyshit/blooio/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/idknerdyshit/blooio/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/idknerdyshit/blooio/releases/tag/v0.1.0
