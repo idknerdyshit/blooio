@@ -85,7 +85,7 @@ required-features = ["sync"]
 
 [[test]]
 name = "redaction"
-required-features = ["tracing", "async"]
+required-features = ["tracing"]
 
 [[test]]
 name = "live_smoke"
