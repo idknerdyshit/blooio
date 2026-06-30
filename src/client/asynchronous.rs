@@ -126,9 +126,14 @@ impl Client {
             req = req.header(*k, v);
         }
         if let Some(body) = &spec.body {
-            req = req
-                .header(CONTENT_TYPE, "application/json")
-                .body(body.clone());
+            if !spec
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
+            {
+                req = req.header(CONTENT_TYPE, "application/json");
+            }
+            req = req.body(body.clone());
         }
 
         let resp = req.send().await.map_err(Error::transport)?;

@@ -154,6 +154,54 @@ fn send_message_includes_idempotency_key() {
 }
 
 #[test]
+fn put_background_uses_multipart_content_type() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(PUT).path("/chats/chat1/background").header(
+            "content-type",
+            "multipart/form-data; boundary=blooio-form-boundary-0",
+        );
+        then.status(200).json_body(serde_json::json!({
+            "chat_id": "chat1",
+            "has_background": true,
+            "changed": true
+        }));
+    });
+
+    let resp = client(&server)
+        .chat("chat1")
+        .set_background(b"fake-png".to_vec())
+        .unwrap();
+    m.assert();
+    assert_eq!(resp.has_background, Some(true));
+}
+
+#[test]
+fn numbers_request_call_forwarding_posts_destination() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/me/numbers/%2B15551234567/call-forwarding")
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({ "forward_to": "+15559876543" }));
+        then.status(201).json_body(serde_json::json!({
+            "success": true,
+            "ticket_id": "tkt_abc123",
+            "status": "open",
+            "number": "+15551234567",
+            "forward_to": "+15559876543"
+        }));
+    });
+
+    let resp = client(&server)
+        .numbers()
+        .request_call_forwarding("+15551234567", "+15559876543")
+        .unwrap();
+    m.assert();
+    assert_eq!(resp.ticket_id.as_deref(), Some("tkt_abc123"));
+}
+
+#[test]
 fn delete_returns_deletion() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {

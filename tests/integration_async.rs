@@ -145,6 +145,10 @@ async fn put_replaces_resource() {
     let server = MockServer::start().await;
     Mock::given(method("PUT"))
         .and(path("/chats/chat1/background"))
+        .and(header(
+            "content-type",
+            "multipart/form-data; boundary=blooio-form-boundary-0",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "chat_id": "chat1",
             "has_background": true,
@@ -157,10 +161,39 @@ async fn put_replaces_resource() {
     let resp = client(&server)
         .await
         .chat("chat1")
-        .set_background("data:image/png;base64,AAAA")
+        .set_background(b"fake-png".to_vec())
         .await
         .unwrap();
     assert_eq!(resp.has_background, Some(true));
+}
+
+#[tokio::test]
+async fn numbers_request_call_forwarding_posts_destination() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/me/numbers/%2B15551234567/call-forwarding"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(
+            serde_json::json!({ "forward_to": "+15559876543" }),
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "success": true,
+            "ticket_id": "tkt_abc123",
+            "status": "open",
+            "number": "+15551234567",
+            "forward_to": "+15559876543"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .numbers()
+        .request_call_forwarding("+15551234567", "+15559876543")
+        .await
+        .unwrap();
+    assert_eq!(resp.ticket_id.as_deref(), Some("tkt_abc123"));
 }
 
 #[tokio::test]

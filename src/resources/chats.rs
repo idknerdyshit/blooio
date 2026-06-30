@@ -171,6 +171,55 @@ pub struct ShareContactCardResponse {
     pub message: Option<String>,
 }
 
+fn multipart_background_body(
+    boundary: &str,
+    background: &[u8],
+    filename: Option<&str>,
+    content_type: Option<&str>,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(b"--");
+    body.extend_from_slice(boundary.as_bytes());
+    body.extend_from_slice(b"\r\nContent-Disposition: form-data; name=\"background\"");
+    if let Some(filename) = filename {
+        body.extend_from_slice(b"; filename=\"");
+        body.extend_from_slice(escape_multipart_header_value(filename).as_bytes());
+        body.extend_from_slice(b"\"");
+    }
+    body.extend_from_slice(b"\r\nContent-Type: ");
+    body.extend_from_slice(
+        content_type
+            .unwrap_or("application/octet-stream")
+            .as_bytes(),
+    );
+    body.extend_from_slice(b"\r\n\r\n");
+    body.extend_from_slice(background);
+    body.extend_from_slice(b"\r\n--");
+    body.extend_from_slice(boundary.as_bytes());
+    body.extend_from_slice(b"--\r\n");
+    body
+}
+
+fn escape_multipart_header_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\r' | '\n' => escaped.push('_'),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
 // ===========================================================================
 // Operations
 // ===========================================================================
@@ -578,11 +627,52 @@ impl Operation for GetChatBackground {
 
 /// `PUT /chats/{chatId}/background`
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct SetChatBackground {
-    #[serde(skip)]
     pub chat_id: String,
-    pub background: String,
+    pub background: Vec<u8>,
+    pub filename: Option<String>,
+    pub content_type: Option<String>,
+}
+
+impl SetChatBackground {
+    /// Create a chat background upload operation from raw image bytes.
+    pub fn new(chat_id: impl Into<String>, background: impl Into<Vec<u8>>) -> Self {
+        Self {
+            chat_id: chat_id.into(),
+            background: background.into(),
+            filename: None,
+            content_type: None,
+        }
+    }
+
+    /// Set the multipart filename for the uploaded image.
+    #[must_use]
+    pub fn filename(mut self, filename: impl Into<String>) -> Self {
+        self.filename = Some(filename.into());
+        self
+    }
+
+    /// Set the MIME type for the uploaded image part.
+    #[must_use]
+    pub fn content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
+    }
+
+    fn boundary(&self) -> &'static str {
+        const BOUNDARIES: [&str; 4] = [
+            "blooio-form-boundary-0",
+            "blooio-form-boundary-1",
+            "blooio-form-boundary-2",
+            "blooio-form-boundary-3",
+        ];
+        BOUNDARIES
+            .iter()
+            .copied()
+            .find(|boundary| !contains_bytes(&self.background, boundary.as_bytes()))
+            .unwrap_or(BOUNDARIES[0])
+    }
 }
 
 impl Operation for SetChatBackground {
@@ -591,8 +681,19 @@ impl Operation for SetChatBackground {
     fn path(&self) -> String {
         format!("/chats/{}/background", encode_path_segment(&self.chat_id))
     }
+    fn headers(&self) -> Vec<(&'static str, String)> {
+        vec![(
+            "Content-Type",
+            format!("multipart/form-data; boundary={}", self.boundary()),
+        )]
+    }
     fn body(&self) -> Result<Option<Vec<u8>>> {
-        json_body(self)
+        Ok(Some(multipart_background_body(
+            self.boundary(),
+            &self.background,
+            self.filename.as_deref(),
+            self.content_type.as_deref(),
+        )))
     }
 }
 
@@ -875,14 +976,19 @@ impl<'c> Chat_<'c, crate::Client> {
     /// Set the chat background.
     pub async fn set_background(
         &self,
-        background: impl Into<String>,
+        background: impl Into<Vec<u8>>,
     ) -> Result<ChatBackgroundResponse> {
         self.client
-            .send(SetChatBackground {
-                chat_id: self.chat_id.clone(),
-                background: background.into(),
-            })
+            .send(SetChatBackground::new(self.chat_id.clone(), background))
             .await
+    }
+
+    /// Set the chat background with a fully-built upload operation.
+    pub async fn set_background_with(
+        &self,
+        op: SetChatBackground,
+    ) -> Result<ChatBackgroundResponse> {
+        self.client.send(op).await
     }
 
     /// Remove the chat background.
@@ -1037,11 +1143,14 @@ impl<'c> Chat_<'c, crate::BlockingClient> {
     }
 
     /// Set the chat background.
-    pub fn set_background(&self, background: impl Into<String>) -> Result<ChatBackgroundResponse> {
-        self.client.send(SetChatBackground {
-            chat_id: self.chat_id.clone(),
-            background: background.into(),
-        })
+    pub fn set_background(&self, background: impl Into<Vec<u8>>) -> Result<ChatBackgroundResponse> {
+        self.client
+            .send(SetChatBackground::new(self.chat_id.clone(), background))
+    }
+
+    /// Set the chat background with a fully-built upload operation.
+    pub fn set_background_with(&self, op: SetChatBackground) -> Result<ChatBackgroundResponse> {
+        self.client.send(op)
     }
 
     /// Remove the chat background.
@@ -1097,5 +1206,49 @@ mod tests {
         let body = msg.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v, serde_json::json!({ "text": "hi" }));
+    }
+
+    #[test]
+    fn set_background_path_encodes_chat_id() {
+        let op = SetChatBackground::new("+15551234567", vec![1, 2, 3]);
+        assert_eq!(op.path(), "/chats/%2B15551234567/background");
+    }
+
+    #[test]
+    fn set_background_uses_multipart_content_type() {
+        let op = SetChatBackground::new("chat1", vec![1, 2, 3]);
+        assert_eq!(
+            op.headers(),
+            vec![(
+                "Content-Type",
+                "multipart/form-data; boundary=blooio-form-boundary-0".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn set_background_body_contains_raw_image_part() {
+        let op = SetChatBackground::new("chat1", b"png-bytes".to_vec())
+            .filename("wallpaper.png")
+            .content_type("image/png");
+        let body = String::from_utf8(op.body().unwrap().unwrap()).unwrap();
+        assert!(body.contains("--blooio-form-boundary-0\r\n"));
+        assert!(body.contains(
+            "Content-Disposition: form-data; name=\"background\"; filename=\"wallpaper.png\""
+        ));
+        assert!(body.contains("Content-Type: image/png\r\n\r\npng-bytes"));
+        assert!(body.ends_with("\r\n--blooio-form-boundary-0--\r\n"));
+    }
+
+    #[test]
+    fn set_background_boundary_avoids_image_bytes() {
+        let op = SetChatBackground::new("chat1", b"blooio-form-boundary-0".to_vec());
+        assert_eq!(
+            op.headers(),
+            vec![(
+                "Content-Type",
+                "multipart/form-data; boundary=blooio-form-boundary-1".into()
+            )]
+        );
     }
 }

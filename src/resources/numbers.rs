@@ -1,9 +1,10 @@
-//! Numbers: list phone numbers attached to the account.
+//! Numbers: list phone numbers attached to the account and manage number
+//! requests.
 
 use http::Method;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::core::operation::Operation;
+use crate::core::operation::{Operation, encode_path_segment, json_body};
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,18 @@ pub struct ListNumbersResponse {
     pub numbers: Vec<NumberInfo>,
 }
 
+/// Response of `POST /me/numbers/{number}/call-forwarding`.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
+pub struct RequestCallForwardingResponse {
+    pub success: Option<bool>,
+    pub ticket_id: Option<String>,
+    pub status: Option<String>,
+    pub number: Option<String>,
+    pub forward_to: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
@@ -42,6 +55,39 @@ impl Operation for ListNumbers {
     const METHOD: Method = Method::GET;
     fn path(&self) -> String {
         "/me/numbers".into()
+    }
+}
+
+/// `POST /me/numbers/{number}/call-forwarding`
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Serialize)]
+pub struct RequestCallForwarding {
+    #[serde(skip)]
+    pub number: String,
+    pub forward_to: String,
+}
+
+impl RequestCallForwarding {
+    /// Create a call-forwarding support request.
+    pub fn new(number: impl Into<String>, forward_to: impl Into<String>) -> Self {
+        Self {
+            number: number.into(),
+            forward_to: forward_to.into(),
+        }
+    }
+}
+
+impl Operation for RequestCallForwarding {
+    type Output = RequestCallForwardingResponse;
+    const METHOD: Method = Method::POST;
+    fn path(&self) -> String {
+        format!(
+            "/me/numbers/{}/call-forwarding",
+            encode_path_segment(&self.number)
+        )
+    }
+    fn body(&self) -> Result<Option<Vec<u8>>> {
+        json_body(self)
     }
 }
 
@@ -78,6 +124,25 @@ impl Numbers<'_, crate::Client> {
     pub async fn list(&self) -> Result<ListNumbersResponse> {
         self.client.send(ListNumbers).await
     }
+
+    /// Request that calls to `number` be forwarded to `forward_to`.
+    pub async fn request_call_forwarding(
+        &self,
+        number: impl Into<String>,
+        forward_to: impl Into<String>,
+    ) -> Result<RequestCallForwardingResponse> {
+        self.client
+            .send(RequestCallForwarding::new(number, forward_to))
+            .await
+    }
+
+    /// Send a fully-built call-forwarding request operation.
+    pub async fn request_call_forwarding_with(
+        &self,
+        op: RequestCallForwarding,
+    ) -> Result<RequestCallForwardingResponse> {
+        self.client.send(op).await
+    }
 }
 
 #[cfg(feature = "sync")]
@@ -85,6 +150,24 @@ impl Numbers<'_, crate::BlockingClient> {
     /// List all phone numbers on the account.
     pub fn list(&self) -> Result<ListNumbersResponse> {
         self.client.send(ListNumbers)
+    }
+
+    /// Request that calls to `number` be forwarded to `forward_to`.
+    pub fn request_call_forwarding(
+        &self,
+        number: impl Into<String>,
+        forward_to: impl Into<String>,
+    ) -> Result<RequestCallForwardingResponse> {
+        self.client
+            .send(RequestCallForwarding::new(number, forward_to))
+    }
+
+    /// Send a fully-built call-forwarding request operation.
+    pub fn request_call_forwarding_with(
+        &self,
+        op: RequestCallForwarding,
+    ) -> Result<RequestCallForwardingResponse> {
+        self.client.send(op)
     }
 }
 
@@ -108,5 +191,26 @@ mod tests {
     #[test]
     fn list_numbers_path() {
         assert_eq!(ListNumbers.path(), "/me/numbers");
+    }
+
+    #[test]
+    fn request_call_forwarding_method_is_post() {
+        assert_eq!(RequestCallForwarding::METHOD, http::Method::POST);
+    }
+
+    #[test]
+    fn request_call_forwarding_path_encodes_number() {
+        let op = RequestCallForwarding::new("+15551234567", "+15559876543");
+        assert_eq!(op.path(), "/me/numbers/%2B15551234567/call-forwarding");
+    }
+
+    #[test]
+    fn request_call_forwarding_body_uses_forward_to() {
+        let op = RequestCallForwarding::new("+15551234567", "+15559876543");
+        let body = op.body().unwrap().unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({ "forward_to": "+15559876543" })
+        );
     }
 }

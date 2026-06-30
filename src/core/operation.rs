@@ -32,7 +32,9 @@ pub trait Operation {
         Vec::new()
     }
 
-    /// The JSON request body, if any.
+    /// The request body, if any. JSON operations usually delegate to
+    /// [`json_body`]; other encodings must also provide their own
+    /// `Content-Type` through [`Operation::headers`].
     fn body(&self) -> Result<Option<Vec<u8>>> {
         Ok(None)
     }

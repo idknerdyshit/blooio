@@ -145,7 +145,13 @@ impl BlockingClient {
         }
 
         let result = if let Some(body) = &spec.body {
-            builder = builder.header(CONTENT_TYPE, "application/json");
+            if !spec
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
+            {
+                builder = builder.header(CONTENT_TYPE, "application/json");
+            }
             let request = builder.body(body.as_ref()).map_err(Error::transport)?;
             self.agent.run(request)
         } else {
