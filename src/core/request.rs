@@ -1,6 +1,9 @@
 //! The fully-resolved request description shared by both executors.
 
+use http::header::AUTHORIZATION;
+
 use crate::core::operation::Operation;
+use crate::core::options::RequestOptions;
 use crate::error::Result;
 
 /// Header used to make retried mutating requests idempotent.
@@ -13,8 +16,8 @@ pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 pub struct RequestSpec {
     pub method: http::Method,
     pub path: String,
-    pub query: Vec<(&'static str, String)>,
-    pub headers: Vec<(&'static str, String)>,
+    pub query: Vec<(String, String)>,
+    pub headers: Vec<(String, String)>,
     pub body: Option<bytes::Bytes>,
 }
 
@@ -24,10 +27,36 @@ impl RequestSpec {
         Ok(RequestSpec {
             method: O::METHOD,
             path: op.path(),
-            query: op.query(),
-            headers: op.headers(),
+            query: op
+                .query()
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
+            headers: op
+                .headers()
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect(),
             body: op.body()?.map(bytes::Bytes::from),
         })
+    }
+
+    /// Apply request-scoped query/header overrides.
+    ///
+    /// Extra headers replace operation headers with the same name. The
+    /// `Authorization` header is intentionally ignored here; executors inject
+    /// it from their redacted `Secret` state.
+    pub(crate) fn apply_options(&mut self, options: &RequestOptions) {
+        self.query.extend(options.query.iter().cloned());
+
+        for (key, value) in &options.headers {
+            if key.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
+                continue;
+            }
+            self.headers
+                .retain(|(existing, _)| !existing.eq_ignore_ascii_case(key));
+            self.headers.push((key.clone(), value.clone()));
+        }
     }
 
     /// Whether this request mutates server state (anything but `GET`/`HEAD`/
@@ -49,8 +78,10 @@ impl RequestSpec {
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case(IDEMPOTENCY_KEY_HEADER))
         {
-            self.headers
-                .push((IDEMPOTENCY_KEY_HEADER, uuid::Uuid::new_v4().to_string()));
+            self.headers.push((
+                IDEMPOTENCY_KEY_HEADER.to_owned(),
+                uuid::Uuid::new_v4().to_string(),
+            ));
         }
     }
 }
@@ -59,7 +90,11 @@ impl RequestSpec {
 ///
 /// Both executors call this helper rather than relying on backend-specific
 /// query serialization, keeping the async and blocking wire URLs identical.
-pub(crate) fn url_with_query(url: &str, query: &[(&'static str, String)]) -> String {
+pub(crate) fn url_with_query<K, V>(url: &str, query: &[(K, V)]) -> String
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
     if query.is_empty() {
         return url.to_owned();
     }
@@ -70,9 +105,9 @@ pub(crate) fn url_with_query(url: &str, query: &[(&'static str, String)]) -> Str
         if i > 0 {
             out.push('&');
         }
-        out.push_str(&encode_query_component(key));
+        out.push_str(&encode_query_component(key.as_ref()));
         out.push('=');
-        out.push_str(&encode_query_component(value));
+        out.push_str(&encode_query_component(value.as_ref()));
     }
     out
 }
@@ -122,9 +157,36 @@ mod tests {
         assert_eq!(
             url_with_query(
                 "https://example.com/api?existing=1",
-                &[("limit", "50".into())]
+                &[("limit", String::from("50"))]
             ),
             "https://example.com/api?existing=1&limit=50"
         );
+    }
+
+    #[test]
+    fn apply_options_overrides_headers_and_appends_query() {
+        let mut spec = RequestSpec {
+            method: http::Method::GET,
+            path: "/me".into(),
+            query: vec![("limit".into(), "10".into())],
+            headers: vec![("x-mode".into(), "old".into())],
+            body: None,
+        };
+
+        spec.apply_options(
+            &RequestOptions::new()
+                .query("trace", "1")
+                .header("x-mode", "new")
+                .header("authorization", "Bearer wrong"),
+        );
+
+        assert_eq!(
+            spec.query,
+            vec![
+                ("limit".to_owned(), "10".to_owned()),
+                ("trace".to_owned(), "1".to_owned())
+            ]
+        );
+        assert_eq!(spec.headers, vec![("x-mode".to_owned(), "new".to_owned())]);
     }
 }

@@ -14,14 +14,15 @@
     clippy::unreadable_literal
 )]
 
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
 use blooio::resources::webhooks::CreateWebhook;
-use blooio::{Client, ClientConfig, RetryPolicy};
+use blooio::{Client, ClientConfig, RequestOptions, RetryPolicy};
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 /// A client with fast, deterministic retries for exercising the retry loop
 /// without slowing the test suite.
@@ -41,6 +42,24 @@ fn retrying_client(server: &MockServer, max_retries: u32) -> Client {
 
 async fn client(server: &MockServer) -> Client {
     Client::from_config(ClientConfig::new("test-key").with_base_url(server.uri())).unwrap()
+}
+
+#[derive(Debug, Clone)]
+struct CaptureIdempotencyKey {
+    values: Arc<Mutex<Vec<String>>>,
+}
+
+impl Match for CaptureIdempotencyKey {
+    fn matches(&self, request: &Request) -> bool {
+        let Some(value) = request.headers.get("idempotency-key") else {
+            return false;
+        };
+        let Ok(value) = value.to_str() else {
+            return false;
+        };
+        self.values.lock().unwrap().push(value.to_owned());
+        true
+    }
 }
 
 #[tokio::test]
@@ -138,6 +157,266 @@ async fn send_message_includes_idempotency_key() {
         .await
         .unwrap();
     assert_eq!(resp.ids(), vec!["m1"]);
+}
+
+#[tokio::test]
+async fn request_options_add_headers_and_query_params() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/contacts"))
+        .and(query_param("q", "alice"))
+        .and(query_param("trace", "1"))
+        .and(header("x-request-id", "req-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "contacts": [],
+            "pagination": { "limit": 50, "offset": 0, "total": 0 }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let resp = client(&server)
+        .await
+        .send_with_options(
+            blooio::resources::contacts::ListContacts {
+                q: Some("alice".into()),
+                ..Default::default()
+            },
+            RequestOptions::new()
+                .header("x-request-id", "req-123")
+                .query("trace", "1"),
+        )
+        .await
+        .unwrap();
+    assert!(resp.contacts.is_empty());
+}
+
+#[tokio::test]
+async fn request_options_base_url_overrides_url_only() {
+    let client_server = MockServer::start().await;
+    let override_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .expect(1)
+        .mount(&override_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "valid": true,
+            "user_id": "override"
+        })))
+        .with_priority(2)
+        .expect(1)
+        .mount(&override_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer test-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "valid": true,
+            "user_id": "client"
+        })))
+        .expect(1)
+        .mount(&client_server)
+        .await;
+
+    let client = Client::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(client_server.uri())
+            .with_retry(RetryPolicy::none()),
+    )
+    .unwrap();
+    let response = client
+        .send_with_options(
+            blooio::resources::account::GetMe,
+            RequestOptions::new()
+                .base_url(format!("{}/", override_server.uri()))
+                .retry(
+                    RetryPolicy::default()
+                        .with_max_retries(1)
+                        .with_base_delay(Duration::from_millis(1))
+                        .with_jitter(false),
+                ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.user_id.as_deref(), Some("override"));
+    assert_eq!(client.config().base_url, client_server.uri());
+
+    let response = client.account().get().await.unwrap();
+    assert_eq!(response.user_id.as_deref(), Some("client"));
+}
+
+#[tokio::test]
+async fn request_options_retry_override_retries_transient_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "c1",
+            "name": "Alice"
+        })))
+        .with_priority(2)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.uri())
+            .with_retry(RetryPolicy::none()),
+    )
+    .unwrap();
+    let contact = client
+        .send_with_options(
+            CreateContact::new("+15550001111").name("Alice"),
+            RequestOptions::new().retry(
+                RetryPolicy::default()
+                    .with_max_retries(1)
+                    .with_base_delay(Duration::from_millis(1))
+                    .with_jitter(false),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(contact.id.as_deref(), Some("c1"));
+}
+
+#[tokio::test]
+async fn request_options_explicit_idempotency_key_is_preserved() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .and(header("idempotency-key", "explicit-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "c1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let contact = client(&server)
+        .await
+        .send_with_options(
+            CreateContact::new("+15550001111"),
+            RequestOptions::new().header("idempotency-key", "explicit-key"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(contact.id.as_deref(), Some("c1"));
+}
+
+#[tokio::test]
+async fn generated_idempotency_key_is_reused_across_retries() {
+    let server = MockServer::start().await;
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let capture = CaptureIdempotencyKey {
+        values: Arc::clone(&observed),
+    };
+
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .and(capture.clone())
+        .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .and(capture)
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "c1"
+        })))
+        .with_priority(2)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    retrying_client(&server, 1)
+        .contacts()
+        .create(CreateContact::new("+15550001111"))
+        .await
+        .unwrap();
+
+    let values = observed.lock().unwrap();
+    assert_eq!(values.len(), 2);
+    assert_eq!(values[0], values[1]);
+}
+
+#[tokio::test]
+async fn request_options_timeout_applies_per_attempt() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(200))
+                .set_body_json(serde_json::json!({ "valid": true, "user_id": "u1" })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .await
+        .send_with_options(
+            blooio::resources::account::GetMe,
+            RequestOptions::new()
+                .timeout(Duration::from_millis(20))
+                .no_retry(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, blooio::Error::Transport(_)));
+}
+
+#[tokio::test]
+async fn send_with_response_returns_decoded_output_and_raw_data() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-ratelimit-remaining", "9")
+                .insert_header("x-secret", "server-secret")
+                .set_body_json(serde_json::json!({ "valid": true, "user_id": "u1" })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let response = client(&server)
+        .await
+        .send_with_response(blooio::resources::account::GetMe)
+        .await
+        .unwrap();
+    assert_eq!(response.output.user_id.as_deref(), Some("u1"));
+    assert_eq!(response.meta.status, 200);
+    assert_eq!(response.meta.rate_limit.unwrap().remaining, Some(9));
+    assert_eq!(response.raw.status, 200);
+    assert!(response.raw.headers.contains_key("x-secret"));
+    assert!(response.raw.body.starts_with(b"{"));
+
+    let dbg = format!("{response:?}");
+    assert!(!dbg.contains("server-secret"));
+    assert!(dbg.contains("REDACTED"));
 }
 
 #[tokio::test]

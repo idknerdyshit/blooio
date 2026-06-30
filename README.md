@@ -52,7 +52,7 @@ use blooio::Client;
 
 #[tokio::main]
 async fn main() -> blooio::Result<()> {
-    let client = Client::new(std::env::var("BLOOIO_API_KEY").unwrap())?;
+    let client = Client::from_env()?;
 
     // Who am I?
     let me = client.account().get().await?;
@@ -71,7 +71,7 @@ async fn main() -> blooio::Result<()> {
 use blooio::BlockingClient;
 
 fn main() -> blooio::Result<()> {
-    let client = BlockingClient::new(std::env::var("BLOOIO_API_KEY").unwrap())?;
+    let client = BlockingClient::from_env()?;
     client.chat("chat-id").send_text("hello from rust")?;
     Ok(())
 }
@@ -169,8 +169,9 @@ let out = client.send(op).await?;
 
 ## Configuration
 
-`Client::new(key)` uses production defaults. For more control, build a
-`ClientConfig`:
+`Client::from_env()` and `BlockingClient::from_env()` read `BLOOIO_API_KEY`
+(required) and `BLOOIO_BASE_URL` (optional). `Client::new(key)` uses production
+defaults. For more control, build a `ClientConfig`:
 
 ```rust,no_run
 use blooio::{Client, ClientConfig};
@@ -184,6 +185,9 @@ let config = ClientConfig::new("my-api-key")
 let client = Client::from_config(config)?;
 # Ok(()) }
 ```
+
+`ClientConfig::from_env()` returns the same configuration without constructing
+a client.
 
 Applications that already own an HTTP client can reuse it:
 
@@ -206,6 +210,37 @@ Transient failures are retried by default with jittered backoff. Customize that
 behavior with `ClientConfig::with_retry`, or pass `RetryPolicy::none()` to
 disable it.
 
+Per-request transport options are available at the executor layer. Extra
+headers override operation headers except `Authorization`, which is always
+injected from the client's redacted API key. Extra query parameters are appended
+after the operation's query parameters. A per-request base URL is concatenated
+with the operation path, so include the API prefix you need, such as
+`https://backend.blooio.com/v2/api` for v2 operations.
+
+```rust,no_run
+# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+use blooio::{RequestOptions, RetryPolicy};
+use std::time::Duration;
+
+let account = client
+    .send_with_options(
+        blooio::resources::account::GetMe,
+        RequestOptions::new()
+            .base_url("https://backend.blooio.com/v2/api")
+            .timeout(Duration::from_secs(5))
+            .retry(RetryPolicy::none())
+            .header("x-request-id", "req-123")
+            .query("trace", "1"),
+    )
+    .await?;
+# Ok(()) }
+```
+
+Per-request timeout applies to each HTTP attempt, including retries. Async
+callers can cancel the whole operation by dropping the future or wrapping it in
+`tokio::time::timeout`; blocking callers get timeout control but not external
+cancellation.
+
 Use `send_with_meta` to inspect response metadata such as rate-limit headers and
 `Retry-After`:
 
@@ -218,12 +253,28 @@ if let Some(limit) = meta.rate_limit {
 # Ok(()) }
 ```
 
+Use `send_with_response` when you need the decoded output and the raw HTTP
+response from the same request:
+
+```rust,no_run
+# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+let response = client
+    .send_with_response(blooio::resources::account::GetMe)
+    .await?;
+let status = response.raw.status;
+let body = response.raw.body;
+# Ok(()) }
+```
+
+`RawResponse` contains status, headers, and body bytes. Its `Debug`
+implementation redacts header values and body bytes to avoid accidental leaks.
+
 ## Errors
 
 All fallible calls return `blooio::Result<T>`. The `Error` enum distinguishes
 `Api` (non-2xx, with a machine-readable `code`), `Transport`, `Encode`,
-`Decode`, and (with `webhooks`) `Webhook`. Match on the stable code for
-programmatic handling:
+`Decode`, `Config`, and (with `webhooks`) `Webhook`. Match on the stable code
+for programmatic handling:
 
 ```rust,no_run
 # fn handle(err: blooio::Error) {

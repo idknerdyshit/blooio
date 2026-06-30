@@ -14,7 +14,7 @@ use std::time::Duration;
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
 use blooio::resources::webhooks::CreateWebhook;
-use blooio::{BlockingClient, ClientConfig, Operation, RetryPolicy};
+use blooio::{BlockingClient, ClientConfig, Operation, RequestOptions, RetryPolicy};
 use httpmock::prelude::*;
 
 fn client(server: &MockServer) -> BlockingClient {
@@ -151,6 +151,210 @@ fn send_message_includes_idempotency_key() {
     let resp = client(&server).chat("chat1").send_text("hi").unwrap();
     m.assert();
     assert_eq!(resp.ids(), vec!["m1"]);
+}
+
+#[test]
+fn request_options_add_headers_and_query_params() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET)
+            .path("/contacts")
+            .query_param("q", "alice")
+            .query_param("trace", "1")
+            .header("x-request-id", "req-123");
+        then.status(200).json_body(serde_json::json!({
+            "contacts": [],
+            "pagination": { "limit": 50, "offset": 0, "total": 0 }
+        }));
+    });
+
+    let resp = client(&server)
+        .send_with_options(
+            blooio::resources::contacts::ListContacts {
+                q: Some("alice".into()),
+                ..Default::default()
+            },
+            RequestOptions::new()
+                .header("x-request-id", "req-123")
+                .query("trace", "1"),
+        )
+        .unwrap();
+    m.assert();
+    assert!(resp.contacts.is_empty());
+}
+
+#[test]
+fn request_options_base_url_overrides_url_only() {
+    let client_server = MockServer::start();
+    let override_server = MockServer::start();
+    let override_mock = override_server.mock(|when, then| {
+        when.method(GET)
+            .path("/me")
+            .header("Authorization", "Bearer test-key");
+        then.status(503).header("retry-after", "0");
+    });
+    let client_mock = client_server.mock(|when, then| {
+        when.method(GET)
+            .path("/me")
+            .header("Authorization", "Bearer test-key");
+        then.status(200)
+            .json_body(serde_json::json!({ "valid": true, "user_id": "client" }));
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(client_server.base_url())
+            .with_retry(RetryPolicy::none()),
+    )
+    .unwrap();
+    let err = client
+        .send_with_options(
+            blooio::resources::account::GetMe,
+            RequestOptions::new()
+                .base_url(format!("{}/", override_server.base_url()))
+                .retry(
+                    RetryPolicy::default()
+                        .with_max_retries(1)
+                        .with_base_delay(Duration::from_millis(1))
+                        .with_jitter(false),
+                ),
+        )
+        .unwrap_err();
+    assert_eq!(err.status(), Some(503));
+    override_mock.assert_hits(2);
+    assert_eq!(client.config().base_url, client_server.base_url());
+
+    let response = client.account().get().unwrap();
+    client_mock.assert();
+    assert_eq!(response.user_id.as_deref(), Some("client"));
+}
+
+#[test]
+fn request_options_retry_override_retries_transient_error() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/me");
+        then.status(503).header("retry-after", "0");
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.base_url())
+            .with_retry(RetryPolicy::none()),
+    )
+    .unwrap();
+    let err = client
+        .send_with_options(
+            blooio::resources::account::GetMe,
+            RequestOptions::new().retry(
+                RetryPolicy::default()
+                    .with_max_retries(1)
+                    .with_base_delay(Duration::from_millis(1))
+                    .with_jitter(false),
+            ),
+        )
+        .unwrap_err();
+    m.assert_hits(2);
+    assert_eq!(err.status(), Some(503));
+}
+
+#[test]
+fn request_options_explicit_idempotency_key_is_preserved() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/contacts")
+            .header("idempotency-key", "explicit-key");
+        then.status(200)
+            .json_body(serde_json::json!({ "id": "c1" }));
+    });
+
+    let contact = client(&server)
+        .send_with_options(
+            CreateContact::new("+15550001111"),
+            RequestOptions::new().header("idempotency-key", "explicit-key"),
+        )
+        .unwrap();
+    m.assert();
+    assert_eq!(contact.id.as_deref(), Some("c1"));
+}
+
+#[test]
+fn generated_idempotency_key_is_sent_across_retries() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST)
+            .path("/contacts")
+            .header_exists("idempotency-key");
+        then.status(503).header("retry-after", "0");
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.base_url())
+            .with_retry(
+                RetryPolicy::default()
+                    .with_max_retries(1)
+                    .with_base_delay(Duration::from_millis(1))
+                    .with_jitter(false),
+            ),
+    )
+    .unwrap();
+    let err = client
+        .contacts()
+        .create(CreateContact::new("+15550001111"))
+        .unwrap_err();
+    assert_eq!(err.status(), Some(503));
+    m.assert_hits(2);
+}
+
+#[test]
+fn request_options_timeout_applies_per_attempt() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/me");
+        then.status(200)
+            .delay(Duration::from_millis(200))
+            .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
+    });
+
+    let err = client(&server)
+        .send_with_options(
+            blooio::resources::account::GetMe,
+            RequestOptions::new()
+                .timeout(Duration::from_millis(20))
+                .no_retry(),
+        )
+        .unwrap_err();
+    assert!(matches!(err, blooio::Error::Transport(_)));
+    assert_eq!(m.hits(), 1);
+}
+
+#[test]
+fn send_with_response_returns_decoded_output_and_raw_data() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/me");
+        then.status(200)
+            .header("x-ratelimit-remaining", "9")
+            .header("x-secret", "server-secret")
+            .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
+    });
+
+    let response = client(&server)
+        .send_with_response(blooio::resources::account::GetMe)
+        .unwrap();
+    m.assert();
+    assert_eq!(response.output.user_id.as_deref(), Some("u1"));
+    assert_eq!(response.meta.status, 200);
+    assert_eq!(response.meta.rate_limit.unwrap().remaining, Some(9));
+    assert_eq!(response.raw.status, 200);
+    assert!(response.raw.headers.contains_key("x-secret"));
+    assert!(response.raw.body.starts_with(b"{"));
+
+    let dbg = format!("{response:?}");
+    assert!(!dbg.contains("server-secret"));
+    assert!(dbg.contains("REDACTED"));
 }
 
 #[test]

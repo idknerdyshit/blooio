@@ -64,6 +64,17 @@
 //! Use `send_with_meta` (on either client) to receive [`ResponseMeta`] —
 //! rate-limit headers and `Retry-After` — alongside the decoded response, so
 //! you can pace requests against the API's limits.
+//!
+//! Request-scoped transport controls are available through [`RequestOptions`]
+//! and `send_with_options`. They can override retry policy, set a per-attempt
+//! timeout, override the base URL, append query parameters, and add extra
+//! headers. `Authorization` is still injected by the executor from the redacted
+//! client secret.
+//!
+//! Use `send_with_response` when you need [`ApiResponse`], which combines the
+//! decoded output, [`ResponseMeta`], and a [`RawResponse`] containing status,
+//! headers, and body bytes. Raw response debug output redacts header values and
+//! body bytes.
 
 #![forbid(unsafe_code)]
 
@@ -91,7 +102,8 @@ mod client;
 pub use config::{ClientConfig, DEFAULT_BASE_URL};
 #[cfg(any(feature = "async", feature = "sync"))]
 pub use core::{
-    Listing, Operation, Page, Pagination, Paginator, RateLimit, ResponseMeta, RetryPolicy,
+    ApiResponse, Listing, Operation, Page, Pagination, Paginator, RateLimit, RawResponse,
+    RequestOptions, ResponseMeta, RetryPolicy,
 };
 pub use error::{Error, Result};
 pub use secret::Secret;

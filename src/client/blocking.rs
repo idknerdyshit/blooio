@@ -4,7 +4,9 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
+use crate::core::options::RequestOptions;
 use crate::core::ratelimit::ResponseMeta;
+use crate::core::raw::{ApiResponse, RawResponse};
 use crate::core::request::{RequestSpec, url_with_query};
 use crate::core::response::parse_with;
 use crate::error::{Error, Result};
@@ -31,6 +33,13 @@ impl BlockingClient {
     /// Build a client from an API key using production defaults.
     pub fn new(api_key: impl Into<Secret<String>>) -> Result<Self> {
         Self::from_config(ClientConfig::new(api_key))
+    }
+
+    /// Build a client from environment variables.
+    ///
+    /// Reads `BLOOIO_API_KEY` (required) and `BLOOIO_BASE_URL` (optional).
+    pub fn from_env() -> Result<Self> {
+        Self::from_config(ClientConfig::from_env()?)
     }
 
     /// Build a client from a full [`ClientConfig`].
@@ -85,23 +94,83 @@ impl BlockingClient {
         self.send_with_meta(op).map(|(out, _meta)| out)
     }
 
+    /// Execute an [`Operation`] with request-scoped transport options.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn send_with_options<O: Operation>(
+        &self,
+        op: O,
+        options: RequestOptions,
+    ) -> Result<O::Output> {
+        self.send_with_meta_with_options(op, options)
+            .map(|(out, _meta)| out)
+    }
+
     /// Execute an [`Operation`] and decode its response, also returning the
     /// [`ResponseMeta`] (rate-limit headers and `Retry-After`) from the HTTP
     /// response. Use this when you want to self-pace against the API's limits.
     #[allow(clippy::needless_pass_by_value)]
     pub fn send_with_meta<O: Operation>(&self, op: O) -> Result<(O::Output, ResponseMeta)> {
+        self.send_with_meta_with_options(op, RequestOptions::new())
+    }
+
+    /// Execute an [`Operation`] with request-scoped transport options, returning
+    /// the decoded output and parsed response metadata.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn send_with_meta_with_options<O: Operation>(
+        &self,
+        op: O,
+        options: RequestOptions,
+    ) -> Result<(O::Output, ResponseMeta)> {
+        let response = self.send_with_response_with_options(op, options)?;
+        Ok((response.output, response.meta))
+    }
+
+    /// Execute an [`Operation`] and return decoded output plus raw HTTP data.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn send_with_response<O: Operation>(&self, op: O) -> Result<ApiResponse<O::Output>> {
+        self.send_with_response_with_options(op, RequestOptions::new())
+    }
+
+    /// Execute an [`Operation`] with request-scoped transport options and
+    /// return decoded output plus raw HTTP data.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn send_with_response_with_options<O: Operation>(
+        &self,
+        op: O,
+        options: RequestOptions,
+    ) -> Result<ApiResponse<O::Output>> {
         let mut spec = RequestSpec::build(&op)?;
-        let retry = self.config.retry;
+        spec.apply_options(&options);
+        let retry = options.retry_or(self.config.retry);
         // A retried mutating request must be idempotent.
         if retry.max_retries > 0 {
             spec.ensure_idempotency_key();
         }
-        let url = url_with_query(&self.config.url_for(&spec.path), &spec.query);
+        let url = url_with_query(&options.url_for(&self.config, &spec.path), &spec.query);
 
         let mut retries_done = 0u32;
+        let operation_type = std::any::type_name::<O>();
         loop {
-            match self.send_once::<O>(&spec, &url) {
-                Ok(v) => return Ok(v),
+            match self.send_raw_once(&spec, &url, &options, operation_type) {
+                Ok(raw) => {
+                    let meta = ResponseMeta::from_headers(raw.status, &raw.headers);
+                    match parse_with(raw.status, &raw.body, meta.retry_after) {
+                        Ok(output) => return Ok(ApiResponse { output, meta, raw }),
+                        Err(e) if retry.should_retry(retries_done, &e) => {
+                            let delay = retry.delay_for(retries_done, &e);
+                            #[cfg(feature = "tracing")]
+                            tracing::warn!(
+                                attempt = retries_done + 1,
+                                delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                                code = ?e.code(),
+                                "retrying request after transient failure"
+                            );
+                            std::thread::sleep(delay);
+                            retries_done += 1;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
                 Err(e) if retry.should_retry(retries_done, &e) => {
                     let delay = retry.delay_for(retries_done, &e);
                     #[cfg(feature = "tracing")]
@@ -119,17 +188,21 @@ impl BlockingClient {
         }
     }
 
-    /// A single request attempt: build, send, and decode.
-    fn send_once<O: Operation>(
+    /// A single request attempt: build, send, and read the raw body.
+    fn send_raw_once(
         &self,
         spec: &RequestSpec,
         url: &str,
-    ) -> Result<(O::Output, ResponseMeta)> {
+        options: &RequestOptions,
+        operation_type: &'static str,
+    ) -> Result<RawResponse> {
+        #[cfg(not(feature = "tracing"))]
+        let _ = operation_type;
         #[cfg(feature = "tracing")]
         let span = tracing::info_span!(
             "blooio.request",
             method = %spec.method,
-            operation = %std::any::type_name::<O>(),
+            operation = %operation_type,
             status = tracing::field::Empty,
             elapsed_ms = tracing::field::Empty,
         );
@@ -145,7 +218,10 @@ impl BlockingClient {
         // configured on the agent at build time, not per-request.
         builder = builder.header(AUTHORIZATION, self.auth_header.expose().as_str());
         for (k, v) in &spec.headers {
-            builder = builder.header(*k, v);
+            if k.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
+                continue;
+            }
+            builder = builder.header(k.as_str(), v.as_str());
         }
 
         let result = if let Some(body) = &spec.body {
@@ -157,32 +233,49 @@ impl BlockingClient {
                 builder = builder.header(CONTENT_TYPE, "application/json");
             }
             let request = builder.body(body.as_ref()).map_err(Error::transport)?;
-            self.agent.run(request)
+            self.run_request(request, options)
         } else {
             let request = builder.body(()).map_err(Error::transport)?;
-            self.agent.run(request)
+            self.run_request(request, options)
         };
 
-        let mut resp = result.map_err(Error::transport)?;
+        let mut resp = result?;
         let status = resp.status().as_u16();
-        let meta = ResponseMeta::from_headers(status, resp.headers());
+        let headers = resp.headers().clone();
         let bytes = resp.body_mut().read_to_vec().map_err(Error::transport)?;
-
-        let parsed = parse_with(status, &bytes, meta.retry_after).map(|out| (out, meta));
+        let raw: Result<RawResponse> = Ok(RawResponse::new(status, headers, bytes.into()));
 
         #[cfg(feature = "tracing")]
         {
-            span.record("status", status);
+            if let Ok(raw) = &raw {
+                span.record("status", raw.status);
+            }
             span.record(
                 "elapsed_ms",
                 u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
             );
-            match &parsed {
+            match &raw {
                 Ok(_) => tracing::debug!("request completed"),
                 Err(e) => tracing::warn!(code = ?e.code(), "request failed"),
             }
         }
 
-        parsed
+        raw
+    }
+
+    fn run_request<S: ureq::AsSendBody>(
+        &self,
+        request: http::Request<S>,
+        options: &RequestOptions,
+    ) -> Result<http::Response<ureq::Body>> {
+        let request = if let Some(timeout) = options.timeout {
+            self.agent
+                .configure_request(request)
+                .timeout_global(Some(timeout))
+                .build()
+        } else {
+            request
+        };
+        self.agent.run(request).map_err(Error::transport)
     }
 }

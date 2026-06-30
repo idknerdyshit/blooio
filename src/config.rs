@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use crate::core::retry::RetryPolicy;
+use crate::error::{Error, Result};
 use crate::secret::Secret;
 
 /// The production base URL for the Blooio API.
@@ -40,14 +41,35 @@ impl ClientConfig {
         }
     }
 
+    /// Create a configuration from environment variables.
+    ///
+    /// Reads `BLOOIO_API_KEY` (required) and `BLOOIO_BASE_URL` (optional).
+    /// Empty values are treated as missing, and the API key is never reflected
+    /// in error messages.
+    pub fn from_env() -> Result<Self> {
+        Self::from_env_values(env_var("BLOOIO_API_KEY")?, env_var("BLOOIO_BASE_URL")?)
+    }
+
+    pub(crate) fn from_env_values(
+        api_key: Option<String>,
+        base_url: Option<String>,
+    ) -> Result<Self> {
+        let api_key = api_key
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| Error::config("BLOOIO_API_KEY is not set"))?;
+
+        let mut config = Self::new(api_key);
+        if let Some(base_url) = base_url.filter(|value| !value.trim().is_empty()) {
+            validate_base_url(&base_url, "BLOOIO_BASE_URL")?;
+            config = config.with_base_url(base_url);
+        }
+        Ok(config)
+    }
+
     /// Override the base URL (trailing slashes are trimmed).
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
-        let mut url = base_url.into();
-        while url.ends_with('/') {
-            url.pop();
-        }
-        self.base_url = url;
+        self.base_url = normalize_base_url(base_url.into());
         self
     }
 
@@ -76,6 +98,50 @@ impl ClientConfig {
     pub(crate) fn url_for(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
+}
+
+fn env_var(name: &'static str) -> Result<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(Error::config(format!("{name} is not valid Unicode")))
+        }
+    }
+}
+
+pub(crate) fn normalize_base_url(mut base_url: String) -> String {
+    while base_url.ends_with('/') {
+        base_url.pop();
+    }
+    base_url
+}
+
+pub(crate) fn validate_base_url(base_url: &str, name: &'static str) -> Result<()> {
+    if base_url.trim() != base_url {
+        return Err(Error::config(format!("{name} is not a valid base URL")));
+    }
+
+    let uri: http::Uri = base_url
+        .parse()
+        .map_err(|_| Error::config(format!("{name} is not a valid base URL")))?;
+    match uri.scheme_str() {
+        Some("http" | "https") => {}
+        _ => {
+            return Err(Error::config(format!(
+                "{name} must start with http:// or https://"
+            )));
+        }
+    }
+    if uri.authority().is_none()
+        || uri
+            .path_and_query()
+            .is_some_and(|parts| parts.query().is_some())
+    {
+        return Err(Error::config(format!("{name} is not a valid base URL")));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -115,5 +181,42 @@ mod tests {
             cfg.url_for("/chats/c1/messages"),
             "https://example.com/api/chats/c1/messages"
         );
+    }
+
+    #[test]
+    fn from_env_values_requires_api_key() {
+        let err = ClientConfig::from_env_values(None, None).unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(!err.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn from_env_values_uses_base_url_override() {
+        let cfg = ClientConfig::from_env_values(
+            Some("secret-key".into()),
+            Some("https://example.com/api/".into()),
+        )
+        .unwrap();
+        assert_eq!(cfg.base_url, "https://example.com/api");
+        assert_eq!(cfg.api_key.expose(), "secret-key");
+    }
+
+    #[test]
+    fn from_env_values_rejects_invalid_base_url() {
+        let err = ClientConfig::from_env_values(Some("secret-key".into()), Some("nope".into()))
+            .unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(!err.to_string().contains("secret-key"));
+    }
+
+    #[test]
+    fn from_env_values_rejects_base_url_query() {
+        let err = ClientConfig::from_env_values(
+            Some("secret-key".into()),
+            Some("https://example.com/api?token=secret-key".into()),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(!err.to_string().contains("secret-key"));
     }
 }

@@ -46,6 +46,10 @@ pub enum Error {
     #[error("failed to decode response body: {0}")]
     Decode(String),
 
+    /// Client configuration was missing or invalid.
+    #[error("configuration error: {0}")]
+    Config(String),
+
     /// Webhook signature verification failed.
     #[cfg(feature = "webhooks")]
     #[error("webhook verification failed: {0}")]
@@ -65,6 +69,11 @@ impl Error {
 
     pub(crate) fn decode(_e: impl std::fmt::Display) -> Self {
         Error::Decode("failed to decode JSON body".to_owned())
+    }
+
+    #[cfg(any(feature = "async", feature = "sync"))]
+    pub(crate) fn config(e: impl std::fmt::Display) -> Self {
+        Error::Config(e.to_string())
     }
 
     /// The machine-readable API error code, if this is an [`Error::Api`].
