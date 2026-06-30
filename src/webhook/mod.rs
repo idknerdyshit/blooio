@@ -21,8 +21,8 @@ pub use signature::{
 
 #[cfg(any(feature = "axum", feature = "actix"))]
 pub use server::{
-    DEFAULT_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook, WebhookRejection,
-    WebhookVerificationResolver, WebhookVerifier, X_BLOOIO_SIGNATURE_HEADER,
+    DEFAULT_MAX_WEBHOOK_BODY_BYTES, DEFAULT_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook,
+    WebhookRejection, WebhookVerificationResolver, WebhookVerifier, X_BLOOIO_SIGNATURE_HEADER,
 };
 
 use serde::Deserialize;

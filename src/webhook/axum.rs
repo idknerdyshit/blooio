@@ -21,10 +21,11 @@
 //! # }
 //! ```
 
-use ::axum::body::Bytes;
+use ::axum::body::{Body, Bytes};
 use ::axum::extract::{FromRef, FromRequest, Request};
 use ::axum::http::{HeaderMap, StatusCode};
 use ::axum::response::{IntoResponse, Response};
+use futures_util::StreamExt as _;
 
 use crate::webhook::WebhookEvent;
 use crate::webhook::server::{
@@ -46,11 +47,12 @@ where
             req.headers(),
             verifier.header_name(),
             verifier.alternate_header_name(),
-        );
-        let body = Bytes::from_request(req, state)
-            .await
-            .map_err(|e| WebhookRejection::BodyRead(e.to_string()))?;
-        let event = verifier.verify_and_parse(signature.as_deref(), &body)?;
+        )
+        .ok_or(WebhookRejection::MissingSignature)?;
+        let limit = verifier.max_body_bytes();
+        reject_oversize_content_length(req.headers(), limit)?;
+        let body = read_limited_body(req.into_body(), limit).await?;
+        let event = verifier.verify_and_parse(Some(&signature), &body)?;
         Ok(VerifiedWebhook(event))
     }
 }
@@ -73,9 +75,15 @@ where
         let signature =
             SignatureHeader::parse(&signature).map_err(WebhookRejection::InvalidSignature)?;
         let resolver = R::from_ref(state);
-        let body = Bytes::from_request(req, state)
+        signature
+            .check_current_tolerance(resolver.tolerance_secs())
+            .map_err(WebhookRejection::InvalidSignature)
+            .map_err(R::Error::from)?;
+        let limit = resolver.max_body_bytes();
+        reject_oversize_content_length(req.headers(), limit).map_err(R::Error::from)?;
+        let body = read_limited_body(req.into_body(), limit)
             .await
-            .map_err(|e| WebhookRejection::BodyRead(e.to_string()))?;
+            .map_err(R::Error::from)?;
         let context = resolver.verify(&signature, &body).await?;
         let event = WebhookEvent::parse(&body).map_err(WebhookRejection::Malformed)?;
         Ok(ResolvedWebhook { event, context })
@@ -99,4 +107,33 @@ fn header_value(headers: &HeaderMap, name: &str) -> Option<String> {
         .get(name)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
+}
+
+fn reject_oversize_content_length(
+    headers: &HeaderMap,
+    limit: usize,
+) -> Result<(), WebhookRejection> {
+    if headers
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|length| length > limit)
+    {
+        Err(WebhookRejection::PayloadTooLarge { limit })
+    } else {
+        Ok(())
+    }
+}
+
+async fn read_limited_body(body: Body, limit: usize) -> Result<Bytes, WebhookRejection> {
+    let mut stream = body.into_data_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| WebhookRejection::BodyRead(e.to_string()))?;
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err(WebhookRejection::PayloadTooLarge { limit });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(bytes))
 }

@@ -12,8 +12,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// The API returned a non-2xx response. The body was decoded from the
-    /// Blooio `Error` schema where possible.
+    /// The API returned a non-2xx response. Stable `code`/`error` fields are
+    /// decoded from the Blooio `Error` schema where possible; raw server prose
+    /// is not stored in `message`.
     ///
     /// Match on [`code`](Error::Api::code) for stable, machine-readable error
     /// handling (e.g. `outbound_limit_reached`).
@@ -23,7 +24,7 @@ pub enum Error {
         status: u16,
         /// Machine-readable error code, if the body carried one.
         code: Option<String>,
-        /// Human-readable message.
+        /// Sanitized status/code summary suitable for logs.
         message: String,
         /// The short error label (the `error` field), if present.
         error: Option<String>,
@@ -62,8 +63,8 @@ impl Error {
         Error::Encode(e.to_string())
     }
 
-    pub(crate) fn decode(e: impl std::fmt::Display) -> Self {
-        Error::Decode(e.to_string())
+    pub(crate) fn decode(_e: impl std::fmt::Display) -> Self {
+        Error::Decode("failed to decode JSON body".to_owned())
     }
 
     /// The machine-readable API error code, if this is an [`Error::Api`].
@@ -108,12 +109,28 @@ impl Error {
     }
 }
 
-/// Wire shape of the Blooio `Error` schema: `{ error, message, status, code }`.
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_error_does_not_store_source_message() {
+        let err = Error::decode("bad response contained sk-secret-123");
+        assert!(!err.to_string().contains("sk-secret-123"));
+    }
+}
+
+/// Safe subset of the Blooio `Error` schema: `{ error, status, code }`.
 #[cfg(any(feature = "async", feature = "sync"))]
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct ApiErrorBody {
     pub error: Option<String>,
-    pub message: Option<String>,
     #[allow(dead_code)]
     pub status: Option<u16>,
     pub code: Option<String>,

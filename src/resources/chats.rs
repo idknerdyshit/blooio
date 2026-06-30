@@ -264,9 +264,9 @@ impl Operation for ListChatMessages {
 
 /// `POST /chats/{chatId}/messages` — send a message.
 ///
-/// Build with [`SendMessage::new`] and the chained setters. If no
-/// `Idempotency-Key` is supplied, a fresh `UUIDv4` is generated automatically so
-/// accidental duplicate sends are de-duplicated server-side.
+/// Build with [`SendMessage::new`] and the chained setters. The builder seeds a
+/// fresh `UUIDv4` idempotency key so accidental duplicate sends are
+/// de-duplicated server-side.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize)]
 pub struct SendMessage {
@@ -298,7 +298,7 @@ impl SendMessage {
     pub fn new(chat_id: impl Into<String>) -> Self {
         SendMessage {
             chat_id: chat_id.into(),
-            idempotency_key: None,
+            idempotency_key: Some(uuid::Uuid::new_v4().to_string()),
             text: None,
             attachments: None,
             use_typing_indicator: None,
@@ -381,11 +381,10 @@ impl Operation for SendMessage {
         format!("/chats/{}/messages", encode_path_segment(&self.chat_id))
     }
     fn headers(&self) -> Vec<(&'static str, String)> {
-        let key = self
-            .idempotency_key
+        self.idempotency_key
             .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        vec![("Idempotency-Key", key)]
+            .map(|key| vec![("Idempotency-Key", key)])
+            .unwrap_or_default()
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
@@ -1081,6 +1080,7 @@ mod tests {
         assert_eq!(headers[0].0, "Idempotency-Key");
         // Looks like a UUID (36 chars with dashes).
         assert_eq!(headers[0].1.len(), 36);
+        assert_eq!(headers, msg.headers());
     }
 
     #[test]

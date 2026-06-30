@@ -14,12 +14,24 @@ use std::time::Duration;
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
 use blooio::resources::webhooks::CreateWebhook;
-use blooio::{BlockingClient, ClientConfig, RetryPolicy};
+use blooio::{BlockingClient, ClientConfig, Operation, RetryPolicy};
 use httpmock::prelude::*;
 
 fn client(server: &MockServer) -> BlockingClient {
     BlockingClient::from_config(ClientConfig::new("test-key").with_base_url(server.base_url()))
         .unwrap()
+}
+
+#[derive(Debug, Clone)]
+struct HeadHealth;
+
+impl Operation for HeadHealth {
+    type Output = ();
+    const METHOD: http::Method = http::Method::HEAD;
+
+    fn path(&self) -> String {
+        "/health".into()
+    }
 }
 
 #[test]
@@ -90,6 +102,18 @@ fn get_sends_bearer_auth() {
     let me = client(&server).account().get().unwrap();
     m.assert();
     assert_eq!(me.user_id.as_deref(), Some("u1"));
+}
+
+#[test]
+fn send_supports_head_operations() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method("HEAD").path("/health");
+        then.status(204);
+    });
+
+    client(&server).send(HeadHealth).unwrap();
+    m.assert();
 }
 
 #[test]
@@ -292,6 +316,47 @@ fn groups_members_add_posts_contact_id() {
     assert_eq!(resp.contact_created, Some(false));
 }
 
+#[test]
+fn groups_members_list_all_iterator_fetches_successive_pages() {
+    let server = MockServer::start();
+    let full: Vec<_> = (0..50)
+        .map(|i| serde_json::json!({ "id": format!("m{i}"), "contact_id": format!("c{i}") }))
+        .collect();
+
+    let p1 = server.mock(|when, then| {
+        when.method(GET)
+            .path("/groups/g1/members")
+            .query_param("offset", "0")
+            .query_param("limit", "50");
+        then.status(200).json_body(serde_json::json!({
+            "group_id": "g1",
+            "members": full,
+            "pagination": { "limit": 50, "offset": 0, "total": null }
+        }));
+    });
+    let p2 = server.mock(|when, then| {
+        when.method(GET)
+            .path("/groups/g1/members")
+            .query_param("offset", "50")
+            .query_param("limit", "50");
+        then.status(200).json_body(serde_json::json!({
+            "group_id": "g1",
+            "members": [{ "id": "m50", "contact_id": "c50" }],
+            "pagination": { "limit": 50, "offset": 50, "total": null }
+        }));
+    });
+
+    let c = client(&server);
+    let mut total = 0usize;
+    for page in c.groups().members("g1").list_all() {
+        total += page.unwrap().len();
+    }
+
+    p1.assert();
+    p2.assert();
+    assert_eq!(total, 51);
+}
+
 // ---------------------------------------------------------------------------
 // Webhooks
 // ---------------------------------------------------------------------------
@@ -363,6 +428,45 @@ fn webhooks_logs_list_fetches_logs_for_webhook() {
     m.assert();
     assert_eq!(resp.logs.len(), 1);
     assert_eq!(resp.logs[0].event_id.as_deref(), Some("evt1"));
+}
+
+#[test]
+fn webhooks_logs_list_all_iterator_fetches_successive_pages() {
+    let server = MockServer::start();
+    let full: Vec<_> = (0..50)
+        .map(|i| serde_json::json!({ "event_id": format!("evt{i}"), "response_status": 200 }))
+        .collect();
+
+    let p1 = server.mock(|when, then| {
+        when.method(GET)
+            .path("/webhooks/wh1/logs")
+            .query_param("offset", "0")
+            .query_param("limit", "50");
+        then.status(200).json_body(serde_json::json!({
+            "logs": full,
+            "pagination": { "limit": 50, "offset": 0, "total": null }
+        }));
+    });
+    let p2 = server.mock(|when, then| {
+        when.method(GET)
+            .path("/webhooks/wh1/logs")
+            .query_param("offset", "50")
+            .query_param("limit", "50");
+        then.status(200).json_body(serde_json::json!({
+            "logs": [{ "event_id": "evt50", "response_status": 202 }],
+            "pagination": { "limit": 50, "offset": 50, "total": null }
+        }));
+    });
+
+    let c = client(&server);
+    let mut total = 0usize;
+    for page in c.webhooks().logs("wh1").list_all() {
+        total += page.unwrap().len();
+    }
+
+    p1.assert();
+    p2.assert();
+    assert_eq!(total, 51);
 }
 
 // ---------------------------------------------------------------------------
@@ -480,4 +584,26 @@ fn custom_user_agent_is_sent() {
     .unwrap();
     client.account().get().unwrap();
     m.assert();
+}
+
+#[test]
+fn send_with_meta_surfaces_rate_limit_headers() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(GET).path("/me");
+        then.status(200)
+            .header("x-ratelimit-limit", "100")
+            .header("x-ratelimit-remaining", "7")
+            .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
+    });
+
+    let (me, meta) = client(&server)
+        .send_with_meta(blooio::resources::account::GetMe)
+        .unwrap();
+
+    m.assert();
+    assert_eq!(me.user_id.as_deref(), Some("u1"));
+    let rate_limit = meta.rate_limit.expect("rate-limit headers present");
+    assert_eq!(rate_limit.limit, Some(100));
+    assert_eq!(rate_limit.remaining, Some(7));
 }

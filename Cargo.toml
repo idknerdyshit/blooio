@@ -22,16 +22,17 @@ async = [
   "dep:async-stream",
   "dep:http",
   "dep:uuid",
+  "dep:bytes",
 ]
-sync = ["dep:ureq", "dep:http", "dep:uuid"]
+sync = ["dep:ureq", "dep:http", "dep:uuid", "dep:bytes"]
 # TLS backend selection. `rustls` is the default; `native-tls` is opt-in.
 rustls = ["reqwest?/rustls", "ureq?/rustls"]
 native-tls = ["reqwest?/native-tls", "ureq?/native-tls", "dep:native-tls"]
 # Webhook signature verification + typed payloads.
 webhooks = ["dep:hmac", "dep:sha2", "dep:subtle", "dep:hex"]
 # Framework extractors that verify + parse inbound webhooks. Each implies `webhooks`.
-axum = ["webhooks", "dep:axum"]
-actix = ["webhooks", "dep:actix-web"]
+axum = ["webhooks", "dep:axum", "dep:futures-util"]
+actix = ["webhooks", "dep:actix-web", "dep:futures-util"]
 # Structured tracing instrumentation on the executors (secret-redacted).
 tracing = ["dep:tracing"]
 
@@ -42,12 +43,14 @@ http = { version = "1", optional = true }
 thiserror = "2"
 zeroize = { version = "1", features = ["zeroize_derive"] }
 uuid = { version = "1", features = ["v4"], optional = true }
+bytes = { version = "1", optional = true }
 
 tracing = { version = "0.1", optional = true }
 
 reqwest = { version = "0.13", default-features = false, features = ["json", "query"], optional = true }
 tokio = { version = "1", features = ["time"], optional = true }
 futures-core = { version = "0.3", optional = true }
+futures-util = { version = "0.3", optional = true }
 async-stream = { version = "0.3", optional = true }
 ureq = { version = "3", default-features = false, optional = true }
 native-tls = { version = "0.2", optional = true }

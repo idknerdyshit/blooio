@@ -1,12 +1,11 @@
 //! Blocking executor backed by [`ureq`]. Pulls no async runtime.
 
-use http::Method;
-use http::header::AUTHORIZATION;
+use http::header::{AUTHORIZATION, CONTENT_TYPE};
 
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
 use crate::core::ratelimit::ResponseMeta;
-use crate::core::request::RequestSpec;
+use crate::core::request::{RequestSpec, url_with_query};
 use crate::core::response::parse_with;
 use crate::error::{Error, Result};
 use crate::secret::Secret;
@@ -71,23 +70,6 @@ impl BlockingClient {
         &self.config
     }
 
-    fn apply<B>(
-        &self,
-        mut rb: ureq::RequestBuilder<B>,
-        spec: &RequestSpec,
-    ) -> ureq::RequestBuilder<B> {
-        for (k, v) in &spec.query {
-            rb = rb.query(*k, v);
-        }
-        // Key exposed only to set the header; never logged. The User-Agent is
-        // configured on the agent at build time, not per-request.
-        rb = rb.header(AUTHORIZATION.as_str(), self.auth_header.expose().as_str());
-        for (k, v) in &spec.headers {
-            rb = rb.header(*k, v);
-        }
-        rb
-    }
-
     /// Execute an [`Operation`] and decode its response.
     ///
     /// The single blocking IO entry point; every resource method delegates
@@ -110,7 +92,7 @@ impl BlockingClient {
         if retry.max_retries > 0 {
             spec.ensure_idempotency_key();
         }
-        let url = self.config.url_for(&spec.path);
+        let url = url_with_query(&self.config.url_for(&spec.path), &spec.query);
 
         let mut retries_done = 0u32;
         loop {
@@ -143,7 +125,7 @@ impl BlockingClient {
         let span = tracing::info_span!(
             "blooio.request",
             method = %spec.method,
-            path = %spec.path,
+            operation = %std::any::type_name::<O>(),
             status = tracing::field::Empty,
             elapsed_ms = tracing::field::Empty,
         );
@@ -152,15 +134,23 @@ impl BlockingClient {
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
 
-        let result = match spec.method {
-            Method::GET => self.apply(self.agent.get(url), spec).call(),
-            Method::DELETE => self.apply(self.agent.delete(url), spec).call(),
-            Method::POST => self.send_with_body(self.agent.post(url), spec),
-            Method::PUT => self.send_with_body(self.agent.put(url), spec),
-            Method::PATCH => self.send_with_body(self.agent.patch(url), spec),
-            ref other => {
-                return Err(Error::transport(format!("unsupported HTTP method {other}")));
-            }
+        let mut builder = http::Request::builder()
+            .method(spec.method.clone())
+            .uri(url);
+        // Key exposed only to set the header; never logged. The User-Agent is
+        // configured on the agent at build time, not per-request.
+        builder = builder.header(AUTHORIZATION, self.auth_header.expose().as_str());
+        for (k, v) in &spec.headers {
+            builder = builder.header(*k, v);
+        }
+
+        let result = if let Some(body) = &spec.body {
+            builder = builder.header(CONTENT_TYPE, "application/json");
+            let request = builder.body(body.as_ref()).map_err(Error::transport)?;
+            self.agent.run(request)
+        } else {
+            let request = builder.body(()).map_err(Error::transport)?;
+            self.agent.run(request)
         };
 
         let mut resp = result.map_err(Error::transport)?;
@@ -184,17 +174,5 @@ impl BlockingClient {
         }
 
         parsed
-    }
-
-    fn send_with_body(
-        &self,
-        rb: ureq::RequestBuilder<ureq::typestate::WithBody>,
-        spec: &RequestSpec,
-    ) -> std::result::Result<http::Response<ureq::Body>, ureq::Error> {
-        let rb = self.apply(rb, spec);
-        match &spec.body {
-            Some(body) => rb.content_type("application/json").send(body.as_slice()),
-            None => rb.send_empty(),
-        }
     }
 }

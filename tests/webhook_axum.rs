@@ -12,8 +12,8 @@ use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use blooio::webhook::{
-    DEFAULT_TOLERANCE_SECS, ResolvedWebhook, SignatureHeader, VerifiedWebhook, WebhookRejection,
-    WebhookVerificationResolver, WebhookVerifier, peek, verify_preparsed,
+    DEFAULT_MAX_WEBHOOK_BODY_BYTES, ResolvedWebhook, SignatureHeader, VerifiedWebhook,
+    WebhookRejection, WebhookVerificationResolver, WebhookVerifier, peek, verify_preparsed,
 };
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -145,6 +145,23 @@ async fn dynamic_resolver_can_verify_and_return_context() {
 }
 
 #[tokio::test]
+async fn dynamic_resolver_rejects_expired_signature() {
+    let body = br#"{"event":"message.received","protocol":"sms","message_id":"m_dynamic","sender":"+15550002222","internal_id":"+15550001111","text":"hi"}"#;
+    let resp = dynamic_app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/webhooks")
+                .header("x-blooio-signature", sign(1, body))
+                .body(Body::from(body.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn missing_signature_is_unauthorized() {
     let status = send(&[], br#"{"event":"message.received"}"#).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -158,6 +175,24 @@ async fn bad_signature_is_unauthorized() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn oversized_body_is_rejected() {
+    let body = vec![b'x'; DEFAULT_MAX_WEBHOOK_BODY_BYTES + 1];
+    let resp = app()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/webhooks")
+                .header("Blooio-Signature", "t=1700000000,v1=deadbeef")
+                .header("content-length", body.len().to_string())
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[derive(Clone)]
@@ -211,9 +246,6 @@ impl WebhookVerificationResolver for DynamicResolver {
         raw_body: &'a [u8],
     ) -> Self::Future<'a> {
         std::future::ready((|| {
-            signature
-                .check_tolerance(now(), DEFAULT_TOLERANCE_SECS)
-                .map_err(WebhookRejection::InvalidSignature)?;
             let peeked = peek(raw_body).map_err(WebhookRejection::Malformed)?;
             if peeked.internal_id.as_deref() != Some("+15550001111") {
                 return Err(DynamicError::UnknownInternalId);

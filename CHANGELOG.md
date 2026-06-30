@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added configurable webhook extractor body limits and enforced timestamp
+  freshness for dynamic webhook resolvers.
+
+### Changed
+
+- Use shared async/blocking query serialization and avoid raw request paths in
+  tracing spans.
+- Sanitize API/decode error display text so reflected response data is not
+  stored in default error messages.
+- Reuse request body buffers across retries instead of cloning body bytes per
+  attempt.
+
+### Fixed
+
+- Support arbitrary HTTP methods through `BlockingClient::send`.
+- Make `SendMessage` idempotency headers deterministic for each operation
+  value.
+- Reject oversized webhook requests before buffering the full body.
+
 ## [0.3.0] - 2026-06-28
 
 ### Added

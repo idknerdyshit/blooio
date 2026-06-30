@@ -5,7 +5,7 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
 use crate::core::ratelimit::ResponseMeta;
-use crate::core::request::RequestSpec;
+use crate::core::request::{RequestSpec, url_with_query};
 use crate::core::response::parse_with;
 use crate::error::{Error, Result};
 use crate::secret::Secret;
@@ -79,7 +79,7 @@ impl Client {
         if retry.max_retries > 0 {
             spec.ensure_idempotency_key();
         }
-        let url = self.config.url_for(&spec.path);
+        let url = url_with_query(&self.config.url_for(&spec.path), &spec.query);
 
         let mut retries_done = 0u32;
         loop {
@@ -112,7 +112,7 @@ impl Client {
         let span = tracing::info_span!(
             "blooio.request",
             method = %spec.method,
-            path = %spec.path,
+            operation = %std::any::type_name::<O>(),
             status = tracing::field::Empty,
             elapsed_ms = tracing::field::Empty,
         );
@@ -120,9 +120,6 @@ impl Client {
         let start = std::time::Instant::now();
 
         let mut req = self.http.request(spec.method.clone(), url);
-        if !spec.query.is_empty() {
-            req = req.query(&spec.query);
-        }
         // The key is exposed only here, to set the header. It is never logged.
         req = req.header(AUTHORIZATION, self.auth_header.expose().as_str());
         for (k, v) in &spec.headers {

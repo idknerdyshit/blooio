@@ -20,7 +20,7 @@ use blooio::Client;
 use blooio::ClientConfig;
 use blooio::resources::webhooks::{CreateWebhookResponse, RotateSecretResponse};
 #[cfg(feature = "sync")]
-use httpmock::prelude::{GET, MockServer as HttpMockServer};
+use httpmock::prelude::{GET, MockServer as HttpMockServer, POST};
 use tracing_subscriber::fmt::format::FmtSpan;
 #[cfg(feature = "async")]
 use wiremock::matchers::{method, path};
@@ -28,6 +28,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer as WireMockServer, ResponseTemplate};
 
 const SECRET_KEY: &str = "sk-DO-NOT-LEAK-12345";
+const SENSITIVE_PATH_ID: &str = "chat-secret-12345";
 
 /// A `MakeWriter` that appends everything to a shared buffer.
 #[derive(Clone)]
@@ -81,6 +82,10 @@ fn assert_trace_is_redacted(captured: &str) {
     assert!(
         !captured.to_lowercase().contains("bearer "),
         "Authorization header leaked into tracing"
+    );
+    assert!(
+        !captured.contains(SENSITIVE_PATH_ID),
+        "path identifier leaked into tracing output:\n{captured}"
     );
 }
 
@@ -152,10 +157,24 @@ async fn async_tracing_never_emits_the_key() {
         )
         .mount(&server)
         .await;
+    let chat_path = format!("/chats/{SENSITIVE_PATH_ID}/messages");
+    Mock::given(method("POST"))
+        .and(path(chat_path.as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "message_id": "m1",
+            "status": "sent"
+        })))
+        .mount(&server)
+        .await;
 
     let client =
         Client::from_config(ClientConfig::new(SECRET_KEY).with_base_url(server.uri())).unwrap();
     let _ = client.account().get().await.unwrap();
+    let _ = client
+        .chat(SENSITIVE_PATH_ID)
+        .send_text("hi")
+        .await
+        .unwrap();
 
     assert_trace_is_redacted(&captured_string(&buffer));
 }
@@ -172,12 +191,22 @@ fn blocking_tracing_never_emits_the_key() {
         then.status(200)
             .json_body(serde_json::json!({ "valid": true }));
     });
+    let chat_path = format!("/chats/{SENSITIVE_PATH_ID}/messages");
+    let chat_mock = server.mock(|when, then| {
+        when.method(POST).path(chat_path.as_str());
+        then.status(200).json_body(serde_json::json!({
+            "message_id": "m1",
+            "status": "sent"
+        }));
+    });
 
     let client =
         BlockingClient::from_config(ClientConfig::new(SECRET_KEY).with_base_url(server.base_url()))
             .unwrap();
     let _ = client.account().get().unwrap();
+    let _ = client.chat(SENSITIVE_PATH_ID).send_text("hi").unwrap();
 
     mock.assert();
+    chat_mock.assert();
     assert_trace_is_redacted(&captured_string(&buffer));
 }

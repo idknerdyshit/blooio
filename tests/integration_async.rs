@@ -352,6 +352,57 @@ async fn groups_members_add_posts_contact_id() {
     assert_eq!(resp.contact_created, Some(false));
 }
 
+#[tokio::test]
+async fn groups_members_list_all_fetches_successive_pages() {
+    let server = MockServer::start().await;
+    let full: Vec<_> = (0..50)
+        .map(|i| serde_json::json!({ "id": format!("m{i}"), "contact_id": format!("c{i}") }))
+        .collect();
+
+    Mock::given(method("GET"))
+        .and(path("/groups/g42/members"))
+        .and(query_param("offset", "0"))
+        .and(query_param("limit", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "group_id": "g42",
+            "members": full,
+            "pagination": { "limit": 50, "offset": 0, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/groups/g42/members"))
+        .and(query_param("offset", "50"))
+        .and(query_param("limit", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "group_id": "g42",
+            "members": [{ "id": "m50", "contact_id": "c50" }],
+            "pagination": { "limit": 50, "offset": 50, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let members = client(&server)
+        .await
+        .groups()
+        .members("g42")
+        .list_all()
+        .collect_all()
+        .await
+        .unwrap();
+    assert_eq!(members.len(), 51);
+    assert_eq!(
+        members.first().and_then(|m| m.contact_id.as_deref()),
+        Some("c0")
+    );
+    assert_eq!(
+        members.last().and_then(|m| m.contact_id.as_deref()),
+        Some("c50")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Webhooks
 // ---------------------------------------------------------------------------
@@ -441,6 +492,55 @@ async fn webhooks_logs_list_returns_logs() {
     assert_eq!(resp.logs.len(), 1);
     assert_eq!(resp.logs[0].event_id.as_deref(), Some("evt1"));
     assert_eq!(resp.logs[0].response_status, Some(200));
+}
+
+#[tokio::test]
+async fn webhooks_logs_list_all_fetches_successive_pages() {
+    let server = MockServer::start().await;
+    let full: Vec<_> = (0..50)
+        .map(|i| serde_json::json!({ "event_id": format!("evt{i}"), "response_status": 200 }))
+        .collect();
+
+    Mock::given(method("GET"))
+        .and(path("/webhooks/wh1/logs"))
+        .and(query_param("offset", "0"))
+        .and(query_param("limit", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "logs": full,
+            "pagination": { "limit": 50, "offset": 0, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/webhooks/wh1/logs"))
+        .and(query_param("offset", "50"))
+        .and(query_param("limit", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "logs": [{ "event_id": "evt50", "response_status": 202 }],
+            "pagination": { "limit": 50, "offset": 50, "total": null }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let logs = client(&server)
+        .await
+        .webhooks()
+        .logs("wh1")
+        .list_all()
+        .collect_all()
+        .await
+        .unwrap();
+    assert_eq!(logs.len(), 51);
+    assert_eq!(
+        logs.first().and_then(|log| log.event_id.as_deref()),
+        Some("evt0")
+    );
+    assert_eq!(
+        logs.last().and_then(|log| log.event_id.as_deref()),
+        Some("evt50")
+    );
 }
 
 // ---------------------------------------------------------------------------

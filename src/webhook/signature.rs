@@ -5,7 +5,7 @@
 //! `HMAC-SHA256(secret, signed_payload)`. Verification is constant-time and
 //! rejects timestamps outside a tolerance window to prevent replay.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -30,6 +30,9 @@ pub enum VerifyError {
     /// The computed signature did not match any provided `v1` signature.
     #[error("signature mismatch")]
     Mismatch,
+    /// The system clock could not be converted to a Unix timestamp.
+    #[error("system clock unavailable")]
+    ClockUnavailable,
 }
 
 /// Parsed components of a signature header.
@@ -88,12 +91,23 @@ impl SignatureHeader {
             Ok(())
         }
     }
+
+    /// Check that this signature timestamp is within `tolerance_secs` of the
+    /// current system time.
+    pub fn check_current_tolerance(&self, tolerance_secs: u64) -> Result<(), VerifyError> {
+        self.check_tolerance(now_unix()?, tolerance_secs)
+    }
 }
 
-fn now_unix() -> i64 {
+fn now_unix() -> Result<i64, VerifyError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0))
+        .map_err(|_| VerifyError::ClockUnavailable)
+        .and_then(duration_to_unix)
+}
+
+fn duration_to_unix(duration: Duration) -> Result<i64, VerifyError> {
+    i64::try_from(duration.as_secs()).map_err(|_| VerifyError::ClockUnavailable)
 }
 
 /// Verify a webhook signature with an explicit tolerance window.
@@ -107,7 +121,7 @@ pub fn verify(
     raw_body: &[u8],
     tolerance: u64,
 ) -> Result<(), VerifyError> {
-    verify_at(secret, header_value, raw_body, tolerance, now_unix())
+    verify_at(secret, header_value, raw_body, tolerance, now_unix()?)
 }
 
 /// Verify using default tolerance ([`DEFAULT_TOLERANCE_SECS`]).
@@ -266,6 +280,14 @@ mod tests {
         assert_eq!(
             verify_at(SECRET, "t=123", b"{}", 300, 123),
             Err(VerifyError::MalformedHeader)
+        );
+    }
+
+    #[test]
+    fn unix_time_overflow_fails_closed() {
+        assert_eq!(
+            duration_to_unix(Duration::from_secs(u64::MAX)),
+            Err(VerifyError::ClockUnavailable)
         );
     }
 

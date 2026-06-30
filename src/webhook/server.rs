@@ -19,6 +19,9 @@ pub const DEFAULT_SIGNATURE_HEADER: &str = "Blooio-Signature";
 /// Alternate signature header name used by Blooio webhook deliveries.
 pub const X_BLOOIO_SIGNATURE_HEADER: &str = "x-blooio-signature";
 
+/// Default maximum accepted webhook body size, in bytes.
+pub const DEFAULT_MAX_WEBHOOK_BODY_BYTES: usize = 262_144;
+
 /// Holds the webhook signing secret (and verification options) so that the
 /// framework extractors can authenticate and parse an inbound request in one
 /// step. Cheap to clone; store it in your framework's application state.
@@ -27,6 +30,7 @@ pub struct WebhookVerifier {
     secret: Secret<String>,
     tolerance: u64,
     header_name: Cow<'static, str>,
+    max_body_bytes: usize,
 }
 
 impl std::fmt::Debug for WebhookVerifier {
@@ -35,6 +39,7 @@ impl std::fmt::Debug for WebhookVerifier {
         f.debug_struct("WebhookVerifier")
             .field("tolerance", &self.tolerance)
             .field("header_name", &self.header_name)
+            .field("max_body_bytes", &self.max_body_bytes)
             .finish_non_exhaustive()
     }
 }
@@ -47,6 +52,7 @@ impl WebhookVerifier {
             secret: secret.into(),
             tolerance: DEFAULT_TOLERANCE_SECS,
             header_name: Cow::Borrowed(DEFAULT_SIGNATURE_HEADER),
+            max_body_bytes: DEFAULT_MAX_WEBHOOK_BODY_BYTES,
         }
     }
 
@@ -64,6 +70,13 @@ impl WebhookVerifier {
         self
     }
 
+    /// Override the maximum accepted webhook body size, in bytes.
+    #[must_use]
+    pub fn with_max_body_bytes(mut self, max_body_bytes: usize) -> Self {
+        self.max_body_bytes = max_body_bytes;
+        self
+    }
+
     /// The header name this verifier reads the signature from.
     pub fn header_name(&self) -> &str {
         &self.header_name
@@ -78,6 +91,11 @@ impl WebhookVerifier {
         self.header_name
             .eq_ignore_ascii_case(DEFAULT_SIGNATURE_HEADER)
             .then_some(X_BLOOIO_SIGNATURE_HEADER)
+    }
+
+    /// The maximum accepted webhook body size, in bytes.
+    pub fn max_body_bytes(&self) -> usize {
+        self.max_body_bytes
     }
 
     /// Verify a signature header against `body` and, on success, parse the body
@@ -105,7 +123,10 @@ impl WebhookVerifier {
 /// so it can check timestamp tolerance, peek at untrusted routing fields, look
 /// up the correct secret, verify with
 /// [`verify_preparsed`](crate::webhook::verify_preparsed), and return any
-/// application context that should reach the handler.
+/// application context that should reach the handler. Framework extractors
+/// check timestamp freshness before this resolver runs; applications still need
+/// event-id or nonce deduplication when duplicate delivery within the tolerance
+/// window would be harmful.
 pub trait WebhookVerificationResolver {
     /// Context returned to the handler after verification succeeds.
     type Context;
@@ -119,6 +140,16 @@ pub trait WebhookVerificationResolver {
     /// Verify this request and return handler context.
     fn verify<'a>(&'a self, signature: &'a SignatureHeader, raw_body: &'a [u8])
     -> Self::Future<'a>;
+
+    /// Maximum accepted webhook body size, in bytes.
+    fn max_body_bytes(&self) -> usize {
+        DEFAULT_MAX_WEBHOOK_BODY_BYTES
+    }
+
+    /// Replay-protection timestamp tolerance window, in seconds.
+    fn tolerance_secs(&self) -> u64 {
+        DEFAULT_TOLERANCE_SECS
+    }
 }
 
 /// The successfully verified and parsed webhook plus resolver-provided
@@ -153,16 +184,23 @@ pub enum WebhookRejection {
     Malformed(Error),
     /// The request body could not be read from the connection.
     BodyRead(String),
+    /// The request body exceeded the configured byte limit.
+    PayloadTooLarge {
+        /// The configured maximum accepted body size, in bytes.
+        limit: usize,
+    },
 }
 
 impl WebhookRejection {
     /// The HTTP status code an extractor should respond with: `401` for
-    /// missing/invalid signatures, `400` for an unreadable or unparseable body.
+    /// missing/invalid signatures, `413` for an oversized body, and `400` for
+    /// an unreadable or unparseable body.
     pub fn status_code(&self) -> u16 {
         match self {
             WebhookRejection::MissingVerifier => 500,
             WebhookRejection::MissingSignature | WebhookRejection::InvalidSignature(_) => 401,
             WebhookRejection::Malformed(_) | WebhookRejection::BodyRead(_) => 400,
+            WebhookRejection::PayloadTooLarge { .. } => 413,
         }
     }
 }
@@ -175,6 +213,9 @@ impl std::fmt::Display for WebhookRejection {
             WebhookRejection::InvalidSignature(e) => write!(f, "invalid webhook signature: {e}"),
             WebhookRejection::Malformed(e) => write!(f, "malformed webhook body: {e}"),
             WebhookRejection::BodyRead(e) => write!(f, "could not read webhook body: {e}"),
+            WebhookRejection::PayloadTooLarge { limit } => {
+                write!(f, "webhook body exceeds {limit} byte limit")
+            }
         }
     }
 }
@@ -184,7 +225,8 @@ impl std::error::Error for WebhookRejection {
         match self {
             WebhookRejection::MissingVerifier
             | WebhookRejection::MissingSignature
-            | WebhookRejection::BodyRead(_) => None,
+            | WebhookRejection::BodyRead(_)
+            | WebhookRejection::PayloadTooLarge { .. } => None,
             WebhookRejection::InvalidSignature(e) => Some(e),
             WebhookRejection::Malformed(e) => Some(e),
         }
@@ -267,6 +309,12 @@ mod tests {
                 .with_header_name("X-Sig")
                 .alternate_header_name(),
             None
+        );
+        assert_eq!(
+            WebhookVerifier::new(SECRET)
+                .with_max_body_bytes(1024)
+                .max_body_bytes(),
+            1024
         );
     }
 
