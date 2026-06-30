@@ -156,14 +156,41 @@ let chats = client.chats().list_all().stream().try_collect::<Vec<_>>().await?;
 # Ok(()) }
 ```
 
+Paginator helpers request 50 items per page. They stop after an empty page, a
+short page, a page whose `pagination.total` has been reached, or the first
+error. Use `list_with`/`list_messages_with` style methods when you need explicit
+`limit`/`offset` control instead of the default walk.
+
 ### Escape hatch
 
 Every endpoint is described once as a public [`Operation`]. Anything not covered
 by a convenience method can be sent directly:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client, op: impl blooio::Operation<Output = ()>) -> blooio::Result<()> {
-let out = client.send(op).await?;
+# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+use blooio::resources::chats::ListChats;
+
+let first_page = client
+    .send(ListChats {
+        limit: Some(25),
+        offset: Some(0),
+        q: Some("support".into()),
+        sort: None,
+    })
+    .await?;
+# Ok(()) }
+```
+
+This is also useful for request-scoped transport options:
+
+```rust,no_run
+# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+use blooio::{RequestOptions, RetryPolicy};
+use blooio::resources::account::GetMe;
+
+let account = client
+    .send_with_options(GetMe, RequestOptions::new().retry(RetryPolicy::none()))
+    .await?;
 # Ok(()) }
 ```
 
@@ -358,6 +385,14 @@ let app = Router::new()
 
 With the `tracing` feature, each request emits a `blooio.request` span carrying
 the method, path, status, and elapsed time. The API key is never recorded.
+
+## Contributing
+
+Endpoint implementations live in `src/resources/*.rs`. Each public endpoint is
+an `Operation` plus matching async and blocking resource methods, so changes to
+one surface usually need the mirror change in the other. Keep request-specific
+details documented on the public operation fields; response DTOs may stay
+shape-oriented when they directly mirror Blooio's JSON schema.
 
 ## License
 

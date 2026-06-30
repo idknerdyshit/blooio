@@ -63,7 +63,9 @@ impl Operation for ListNumbers {
 #[derive(Debug, Clone, Serialize)]
 pub struct RequestCallForwarding {
     #[serde(skip)]
+    /// Account phone number whose calls should be forwarded.
     pub number: String,
+    /// Destination phone number to forward calls to.
     pub forward_to: String,
 }
 

@@ -15,10 +15,13 @@ use crate::error::Result;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContactCardSharing {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Whether contact-card sharing is enabled.
     pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Sharing audience code accepted by the API.
     pub audience: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Name-format code accepted by the API.
     pub name_format: Option<i64>,
 }
 
@@ -59,6 +62,7 @@ pub struct UpdateContactCardResponse {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetMyContactCard {
+    /// Account phone number whose contact card should be fetched.
     pub number: String,
 }
 
@@ -78,14 +82,19 @@ impl Operation for GetMyContactCard {
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateMyContactCard {
     #[serde(skip)]
+    /// Account phone number whose contact card should be updated.
     pub number: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// First name to publish.
     pub first_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Last name to publish.
     pub last_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Avatar URL or API-supported avatar payload.
     pub avatar: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Contact-card sharing settings.
     pub sharing: Option<ContactCardSharing>,
 }
 

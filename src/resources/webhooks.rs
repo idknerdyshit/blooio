@@ -110,10 +110,13 @@ impl Operation for ListWebhooks {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateWebhook {
+    /// Public URL that Blooio should deliver webhook events to.
     pub webhook_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Webhook type/scope selector accepted by the API.
     pub webhook_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Optional expiry timestamp, expressed as the API expects.
     pub valid_until: Option<i64>,
 }
 
@@ -157,6 +160,7 @@ impl Operation for CreateWebhook {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetWebhook {
+    /// Blooio webhook id.
     pub webhook_id: String,
 }
 
@@ -173,12 +177,16 @@ impl Operation for GetWebhook {
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateWebhook {
     #[serde(skip)]
+    /// Blooio webhook id.
     pub webhook_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Replacement webhook type/scope selector accepted by the API.
     pub webhook_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Replacement expiry timestamp, expressed as the API expects.
     pub valid_until: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Whether to mark the webhook as deprecated.
     pub deprecate: Option<bool>,
 }
 
@@ -230,6 +238,7 @@ impl Operation for UpdateWebhook {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct DeleteWebhook {
+    /// Blooio webhook id.
     pub webhook_id: String,
 }
 
@@ -245,6 +254,7 @@ impl Operation for DeleteWebhook {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct RotateWebhookSecret {
+    /// Blooio webhook id.
     pub webhook_id: String,
 }
 
@@ -263,12 +273,19 @@ impl Operation for RotateWebhookSecret {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct ListWebhookLogs {
+    /// Blooio webhook id.
     pub webhook_id: String,
+    /// Maximum number of log entries to return.
     pub limit: Option<u32>,
+    /// Number of log entries to skip before returning results.
     pub offset: Option<u32>,
+    /// API sort expression.
     pub sort: Option<String>,
+    /// Exact HTTP status filter.
     pub status: Option<i64>,
+    /// Minimum HTTP status filter.
     pub min_status: Option<i64>,
+    /// Maximum HTTP status filter.
     pub max_status: Option<i64>,
 }
 
@@ -294,7 +311,9 @@ impl Operation for ListWebhookLogs {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct ReplayWebhookEvent {
+    /// Blooio webhook id.
     pub webhook_id: String,
+    /// Blooio webhook event/log id to replay.
     pub event_id: String,
 }
 

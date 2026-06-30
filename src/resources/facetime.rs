@@ -28,6 +28,7 @@ pub struct FaceTimeCallResponse {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CallFaceTime {
+    /// Phone number, email address, or handle to call.
     pub handle: String,
 }
 

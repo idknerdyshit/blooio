@@ -80,9 +80,13 @@ pub struct RemoveGroupMemberResponse {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct ListGroups {
+    /// Maximum number of groups to return.
     pub limit: Option<u32>,
+    /// Number of groups to skip before returning results.
     pub offset: Option<u32>,
+    /// Search text used by the API to filter groups.
     pub q: Option<String>,
+    /// API sort expression.
     pub sort: Option<String>,
 }
 
@@ -106,10 +110,13 @@ impl Operation for ListGroups {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateGroup {
+    /// Group display name.
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Existing chat GUID to associate with the group.
     pub chat_guid: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Initial contact/member identifiers.
     pub members: Option<Vec<String>>,
 }
 
@@ -153,6 +160,7 @@ impl Operation for CreateGroup {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetGroup {
+    /// Blooio group id.
     pub group_id: String,
 }
 
@@ -169,8 +177,10 @@ impl Operation for GetGroup {
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateGroup {
     #[serde(skip)]
+    /// Blooio group id.
     pub group_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Replacement group display name.
     pub name: Option<String>,
 }
 
@@ -189,6 +199,7 @@ impl Operation for UpdateGroup {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct DeleteGroup {
+    /// Blooio group id.
     pub group_id: String,
 }
 
@@ -205,7 +216,9 @@ impl Operation for DeleteGroup {
 #[derive(Debug, Clone, Serialize)]
 pub struct SetGroupIcon {
     #[serde(skip)]
+    /// Blooio group id.
     pub group_id: String,
+    /// Icon value accepted by the API.
     pub icon: String,
 }
 
@@ -224,6 +237,7 @@ impl Operation for SetGroupIcon {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct RemoveGroupIcon {
+    /// Blooio group id.
     pub group_id: String,
 }
 
@@ -239,8 +253,11 @@ impl Operation for RemoveGroupIcon {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct ListGroupMembers {
+    /// Blooio group id.
     pub group_id: String,
+    /// Maximum number of members to return.
     pub limit: Option<u32>,
+    /// Number of members to skip before returning results.
     pub offset: Option<u32>,
 }
 
@@ -263,7 +280,9 @@ impl Operation for ListGroupMembers {
 #[derive(Debug, Clone, Serialize)]
 pub struct AddGroupMember {
     #[serde(skip)]
+    /// Blooio group id.
     pub group_id: String,
+    /// Blooio contact id to add.
     pub contact_id: String,
 }
 
@@ -282,7 +301,9 @@ impl Operation for AddGroupMember {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct RemoveGroupMember {
+    /// Blooio group id.
     pub group_id: String,
+    /// Blooio contact id to remove.
     pub contact_id: String,
 }
 

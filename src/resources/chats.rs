@@ -267,9 +267,13 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct ListChats {
+    /// Maximum number of chats to return.
     pub limit: Option<u32>,
+    /// Number of chats to skip before returning results.
     pub offset: Option<u32>,
+    /// Search text used by the API to filter chats.
     pub q: Option<String>,
+    /// API sort expression.
     pub sort: Option<String>,
 }
 
@@ -293,6 +297,7 @@ impl Operation for ListChats {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetChat {
+    /// Blooio chat id.
     pub chat_id: String,
 }
 
@@ -308,12 +313,19 @@ impl Operation for GetChat {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct ListChatMessages {
+    /// Blooio chat id.
     pub chat_id: String,
+    /// Maximum number of messages to return.
     pub limit: Option<u32>,
+    /// Number of messages to skip before returning results.
     pub offset: Option<u32>,
+    /// API sort expression.
     pub sort: Option<String>,
+    /// Message sort direction, as accepted by the API.
     pub direction: Option<String>,
+    /// Lower timestamp bound for messages, expressed as the API expects.
     pub since: Option<i64>,
+    /// Upper timestamp bound for messages, expressed as the API expects.
     pub until: Option<i64>,
 }
 
@@ -359,27 +371,38 @@ impl Operation for ListChatMessages {
 #[derive(Debug, Clone, Serialize)]
 pub struct SendMessage {
     #[serde(skip)]
+    /// Blooio chat id.
     pub chat_id: String,
     #[serde(skip)]
+    /// Idempotency key sent as the `Idempotency-Key` header.
     pub idempotency_key: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Message text, either a single message or multiple message bubbles.
     pub text: Option<Text>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Attachments to include with the message.
     pub attachments: Option<Vec<Attachment>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Whether Blooio should show a typing indicator before sending.
     pub use_typing_indicator: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Originating phone number to send from.
     pub from_number: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Whether to include the account contact card with the message.
     pub share_contact: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Ordered rich message parts.
     pub parts: Option<Vec<MessagePart>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Rich link-preview override.
     pub link_preview: Option<LinkPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// iMessage effect name, such as `confetti` or `slam`.
     pub effect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Parent message target for an inline reply.
     pub reply_to: Option<ReplyToRequest>,
 }
 
@@ -507,7 +530,9 @@ impl Operation for SendMessage {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetMessage {
+    /// Blooio chat id.
     pub chat_id: String,
+    /// Blooio message id.
     pub message_id: String,
 }
 
@@ -527,7 +552,9 @@ impl Operation for GetMessage {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetMessageStatus {
+    /// Blooio chat id.
     pub chat_id: String,
+    /// Blooio message id.
     pub message_id: String,
 }
 
@@ -548,11 +575,15 @@ impl Operation for GetMessageStatus {
 #[derive(Debug, Clone, Serialize)]
 pub struct AddReaction {
     #[serde(skip)]
+    /// Blooio chat id.
     pub chat_id: String,
     #[serde(skip)]
+    /// Blooio message id to react to.
     pub message_id: String,
+    /// Reaction value accepted by the API.
     pub reaction: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Reaction direction, when the API distinguishes add/remove style actions.
     pub direction: Option<String>,
 }
 
@@ -576,9 +607,12 @@ impl Operation for AddReaction {
 #[derive(Debug, Clone, Serialize)]
 pub struct SendPoll {
     #[serde(skip)]
+    /// Blooio chat id.
     pub chat_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Optional poll title.
     pub title: Option<String>,
+    /// Poll options to present.
     pub options: Vec<String>,
 }
 
@@ -597,7 +631,9 @@ impl Operation for SendPoll {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetPollResults {
+    /// Blooio chat id.
     pub chat_id: String,
+    /// Blooio poll id.
     pub poll_id: String,
 }
 
@@ -617,6 +653,7 @@ impl Operation for GetPollResults {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct StartTyping {
+    /// Blooio chat id.
     pub chat_id: String,
 }
 
@@ -632,6 +669,7 @@ impl Operation for StartTyping {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct StopTyping {
+    /// Blooio chat id.
     pub chat_id: String,
 }
 
@@ -647,6 +685,7 @@ impl Operation for StopTyping {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct MarkChatRead {
+    /// Blooio chat id.
     pub chat_id: String,
 }
 
@@ -662,6 +701,7 @@ impl Operation for MarkChatRead {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct ShareContactCard {
+    /// Blooio chat id.
     pub chat_id: String,
 }
 
@@ -677,6 +717,7 @@ impl Operation for ShareContactCard {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetChatBackground {
+    /// Blooio chat id.
     pub chat_id: String,
 }
 
@@ -692,9 +733,14 @@ impl Operation for GetChatBackground {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct SetChatBackground {
+    /// Blooio chat id.
     pub chat_id: String,
+    /// Raw image bytes uploaded as a multipart `background` part.
     pub background: Vec<u8>,
+    /// Optional multipart filename for the uploaded image.
     pub filename: Option<String>,
+    /// Optional MIME type for the uploaded image; defaults to
+    /// `application/octet-stream`.
     pub content_type: Option<String>,
 }
 
@@ -764,6 +810,7 @@ impl Operation for SetChatBackground {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct RemoveChatBackground {
+    /// Blooio chat id.
     pub chat_id: String,
 }
 

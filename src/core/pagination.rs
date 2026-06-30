@@ -12,8 +12,11 @@ use crate::error::Result;
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Pagination {
+    /// Requested page size, when the API reports it.
     pub limit: Option<i64>,
+    /// Requested offset, when the API reports it.
     pub offset: Option<i64>,
+    /// Total matching items, when the API reports it.
     pub total: Option<i64>,
     /// Number of items returned in this page (some endpoints report it).
     pub returned: Option<i64>,
@@ -25,7 +28,9 @@ pub struct Pagination {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct Page<T> {
+    /// Items returned in this page.
     pub items: Vec<T>,
+    /// Pagination metadata returned with the page, if the endpoint provided it.
     pub pagination: Option<Pagination>,
 }
 
@@ -79,6 +84,10 @@ impl Cursor {
 /// A lazy paginator that fetches successive offset pages on demand.
 ///
 /// `make` builds the list operation for a given `(offset, limit)`.
+///
+/// Resource `*_all` helpers use [`DEFAULT_PAGE_SIZE`] and stop when the API
+/// returns an empty page, a page shorter than the requested limit, metadata
+/// showing `pagination.total` has been reached, or the first fetch error.
 pub struct Paginator<'c, C, F, O>
 where
     F: Fn(u32, u32) -> O,

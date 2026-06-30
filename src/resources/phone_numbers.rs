@@ -26,6 +26,7 @@ pub struct BatchLookupResponse {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct LookupPhoneNumber {
+    /// Phone number to look up, sent as a query parameter.
     pub number: String,
 }
 
@@ -44,6 +45,7 @@ impl Operation for LookupPhoneNumber {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize)]
 pub struct LookupPhoneNumberPost {
+    /// Phone number to look up, sent in the JSON body.
     pub number: String,
 }
 
@@ -62,6 +64,7 @@ impl Operation for LookupPhoneNumberPost {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize)]
 pub struct BatchLookupPhoneNumbers {
+    /// Phone numbers to look up in one request.
     pub numbers: Vec<String>,
 }
 

@@ -87,9 +87,13 @@ pub struct AddTagsResponse {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Default)]
 pub struct ListContacts {
+    /// Maximum number of contacts to return.
     pub limit: Option<u32>,
+    /// Number of contacts to skip before returning results.
     pub offset: Option<u32>,
+    /// Search text used by the API to filter contacts.
     pub q: Option<String>,
+    /// API sort expression.
     pub sort: Option<String>,
 }
 
@@ -113,8 +117,10 @@ impl Operation for ListContacts {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateContact {
+    /// Phone number, handle, or other contact identifier accepted by Blooio.
     pub identifier: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Optional display name.
     pub name: Option<String>,
 }
 
@@ -150,6 +156,7 @@ impl Operation for CreateContact {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetContact {
+    /// Blooio contact id.
     pub contact_id: String,
 }
 
@@ -166,8 +173,10 @@ impl Operation for GetContact {
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateContact {
     #[serde(skip)]
+    /// Blooio contact id.
     pub contact_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Replacement display name.
     pub name: Option<String>,
 }
 
@@ -186,6 +195,7 @@ impl Operation for UpdateContact {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct DeleteContact {
+    /// Blooio contact id.
     pub contact_id: String,
 }
 
@@ -201,6 +211,7 @@ impl Operation for DeleteContact {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetContactCapabilities {
+    /// Blooio contact id.
     pub contact_id: String,
 }
 
@@ -219,6 +230,7 @@ impl Operation for GetContactCapabilities {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct ListContactTags {
+    /// Blooio contact id.
     pub contact_id: String,
 }
 
@@ -235,7 +247,9 @@ impl Operation for ListContactTags {
 #[derive(Debug, Clone, Serialize)]
 pub struct AddContactTags {
     #[serde(skip)]
+    /// Blooio contact id.
     pub contact_id: String,
+    /// Tags to add to the contact.
     pub tags: Vec<String>,
 }
 
@@ -254,7 +268,9 @@ impl Operation for AddContactTags {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct RemoveContactTag {
+    /// Blooio contact id.
     pub contact_id: String,
+    /// Tag value to remove.
     pub tag: String,
 }
 

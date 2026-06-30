@@ -47,6 +47,7 @@ impl Operation for ListLocationContacts {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct GetLocationContact {
+    /// Contact handle whose shared location should be fetched.
     pub handle: String,
 }
 

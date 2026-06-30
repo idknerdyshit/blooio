@@ -14,10 +14,15 @@ pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 #[allow(missing_docs)]
 #[derive(Debug)]
 pub struct RequestSpec {
+    /// HTTP method resolved from the operation.
     pub method: http::Method,
+    /// Path relative to the configured base URL.
     pub path: String,
+    /// Query parameters before executor-level serialization.
     pub query: Vec<(String, String)>,
+    /// Operation and request-option headers, excluding executor-injected auth.
     pub headers: Vec<(String, String)>,
+    /// Request body bytes, if the operation has a body.
     pub body: Option<bytes::Bytes>,
 }
 
