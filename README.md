@@ -80,6 +80,18 @@ fn main() -> blooio::Result<()> {
 The async and blocking surfaces are mirror images: the same resource handles and
 method names, differing only by `.await`.
 
+## Client reuse
+
+Create one client per API key/base URL and reuse it for that configuration. The
+async `Client` wraps a pooled `reqwest::Client`; the blocking `BlockingClient`
+wraps a pooled `ureq::Agent`. Cloning either Blooio client is cheap and shares
+the underlying transport state.
+
+Avoid constructing a fresh client inside hot request loops, because that defeats
+connection reuse. If your application already owns a configured HTTP transport,
+inject it with `Client::from_config_and_http_client` or
+`BlockingClient::from_config_and_agent`.
+
 ## Resources
 
 Resource handles hang off the client and group the endpoints:

@@ -12,7 +12,11 @@ use crate::secret::Secret;
 
 /// Asynchronous Blooio API client.
 ///
-/// Cheap to clone (the underlying `reqwest::Client` is reference-counted).
+/// Cheap to clone (the underlying `reqwest::Client` is reference-counted and
+/// maintains its own connection pool).
+///
+/// Construct one `Client` per API key/base URL and reuse or clone it across
+/// requests. Creating a fresh client for each request defeats connection reuse.
 /// Resource accessors (`client.contacts()`, `client.chat(id)`, …) are defined
 /// across the [`crate::resources`] modules.
 #[derive(Clone, Debug)]

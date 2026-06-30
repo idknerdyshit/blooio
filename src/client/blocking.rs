@@ -13,6 +13,10 @@ use crate::secret::Secret;
 /// Blocking Blooio API client.
 ///
 /// A thin wrapper over a [`ureq::Agent`]; cloning shares the connection pool.
+///
+/// Construct one `BlockingClient` per API key/base URL and reuse or clone it
+/// across requests. Creating a fresh client for each request defeats connection
+/// reuse.
 /// Resource accessors mirror those on the async [`Client`](crate::Client).
 #[derive(Clone, Debug)]
 pub struct BlockingClient {

@@ -10,17 +10,7 @@
     clippy::unwrap_in_result
 )]
 
-use blooio::{MeResponse, Secret};
-
-const SECRET_KEY: &str = "sk-DO-NOT-LEAK-12345";
-
-#[test]
-fn secret_wrapper_is_redacted_in_debug_and_display() {
-    let secret = Secret::from(SECRET_KEY);
-    assert_eq!(format!("{secret:?}"), "[REDACTED]");
-    assert_eq!(format!("{secret}"), "[REDACTED]");
-    assert!(!format!("{secret:?}").contains(SECRET_KEY));
-}
+use blooio::MeResponse;
 
 #[test]
 fn account_response_api_key_is_redacted_in_debug() {

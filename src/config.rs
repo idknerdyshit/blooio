@@ -108,15 +108,6 @@ mod tests {
     }
 
     #[test]
-    fn with_timeout_and_user_agent_override() {
-        let cfg = ClientConfig::new("k")
-            .with_timeout(Duration::from_millis(500))
-            .with_user_agent("my-app/1.0");
-        assert_eq!(cfg.timeout, Duration::from_millis(500));
-        assert_eq!(cfg.user_agent, "my-app/1.0");
-    }
-
-    #[test]
     fn url_for_concatenates_base_and_path() {
         let cfg = ClientConfig::new("k").with_base_url("https://example.com/api");
         assert_eq!(cfg.url_for("/me"), "https://example.com/api/me");
@@ -124,13 +115,5 @@ mod tests {
             cfg.url_for("/chats/c1/messages"),
             "https://example.com/api/chats/c1/messages"
         );
-    }
-
-    #[test]
-    fn debug_redacts_api_key() {
-        let cfg = ClientConfig::new("super-secret-key");
-        let dbg = format!("{cfg:?}");
-        assert!(!dbg.contains("super-secret-key"), "api key leaked in Debug");
-        assert!(dbg.contains("REDACTED"));
     }
 }

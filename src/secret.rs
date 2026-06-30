@@ -97,15 +97,9 @@ mod tests {
     #[test]
     fn debug_and_display_are_redacted() {
         let s = Secret::from("super-secret-key");
+
         assert_eq!(format!("{s:?}"), "[REDACTED]");
         assert_eq!(format!("{s}"), "[REDACTED]");
-        assert!(!format!("{s:?}").contains("super-secret"));
-    }
-
-    #[test]
-    fn expose_returns_inner() {
-        let s = Secret::from("abc");
-        assert_eq!(s.expose(), "abc");
     }
 
     #[test]

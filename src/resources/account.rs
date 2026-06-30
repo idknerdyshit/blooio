@@ -77,12 +77,9 @@ mod tests {
     use crate::core::operation::Operation;
 
     #[test]
-    fn get_me_method_is_get() {
+    fn get_me_method_and_path() {
         assert_eq!(GetMe::METHOD, http::Method::GET);
-    }
 
-    #[test]
-    fn get_me_path() {
         assert_eq!(GetMe.path(), "/me");
     }
 }

@@ -28,6 +28,18 @@
 //! The [`Operation`] types are public, so anything not covered by a convenience
 //! method can be sent directly: `client.send(op).await`.
 //!
+//! ## Client reuse
+//!
+//! Construct one client per API key/base URL and reuse it for the lifetime of
+//! that configuration. The async [`Client`] wraps a pooled [`reqwest::Client`],
+//! and the blocking [`BlockingClient`] wraps a pooled `ureq::Agent`; cloning a
+//! Blooio client is cheap and shares the underlying transport state.
+//!
+//! Avoid creating a new client for each request in hot paths, because that
+//! defeats connection reuse. Applications that already own a configured
+//! transport can inject it with [`Client::from_config_and_http_client`] or
+//! [`BlockingClient::from_config_and_agent`].
+//!
 //! ## Features
 //!
 //! - `async` *(default)* — the [`Client`] executor (reqwest).

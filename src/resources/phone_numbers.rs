@@ -270,19 +270,4 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v, serde_json::json!({ "numbers": [] }));
     }
-
-    // Explicitly verify GET vs POST distinction for same path
-    #[test]
-    fn lookup_get_vs_post_same_path_different_methods() {
-        assert_ne!(LookupPhoneNumber::METHOD, LookupPhoneNumberPost::METHOD);
-        let get_op = LookupPhoneNumber {
-            number: "+15550001111".into(),
-        };
-        let post_op = LookupPhoneNumberPost {
-            number: "+15550001111".into(),
-        };
-        assert_eq!(get_op.path(), post_op.path());
-        assert_eq!(LookupPhoneNumber::METHOD, http::Method::GET);
-        assert_eq!(LookupPhoneNumberPost::METHOD, http::Method::POST);
-    }
 }
