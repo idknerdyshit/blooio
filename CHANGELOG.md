@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-30
+
+### Added
+
+- Added SDK parity request controls. (85da6dc)
+- Support inline reply send messages. (c8ed7ec)
+
+### Changed
+
+- Improve API documentation. (b4815ec)
+- Refine client reuse docs and prune tests. (fbe4516)
+
 ## [0.3.2] - 2026-06-30
 
 ### Added
@@ -117,7 +129,8 @@ Initial release.
   `blooio.request` span per request carrying method, path, status, and elapsed.
 - Dual-licensed under MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/idknerdyshit/blooio/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/idknerdyshit/blooio/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/idknerdyshit/blooio/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/idknerdyshit/blooio/compare/v0.2.1...v0.3.0
