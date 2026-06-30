@@ -374,6 +374,7 @@ pub struct SendMessageResponse {
     pub group_id: Option<String>,
     pub group_created: Option<bool>,
     pub participants: Option<Vec<String>>,
+    pub parent_unresolved: Option<bool>,
 }
 
 impl SendMessageResponse {

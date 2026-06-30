@@ -86,6 +86,45 @@ pub struct MessagePart {
     pub link_preview: Option<LinkPreview>,
 }
 
+/// Inline reply target for `POST /chats/{chatId}/messages`.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ReplyToRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub part_index: Option<u32>,
+}
+
+impl ReplyToRequest {
+    /// Target a Blooio-minted parent message id.
+    pub fn message_id(message_id: impl Into<String>) -> Self {
+        Self {
+            message_id: Some(message_id.into()),
+            guid: None,
+            part_index: None,
+        }
+    }
+
+    /// Target a raw iMessage parent GUID.
+    pub fn guid(guid: impl Into<String>) -> Self {
+        Self {
+            message_id: None,
+            guid: Some(guid.into()),
+            part_index: None,
+        }
+    }
+
+    /// Set the parent message part index. Defaults server-side to `0`.
+    #[must_use]
+    pub fn part_index(mut self, part_index: u32) -> Self {
+        self.part_index = Some(part_index);
+        self
+    }
+}
+
 // ===========================================================================
 // Resource-specific response types
 // ===========================================================================
@@ -340,6 +379,8 @@ pub struct SendMessage {
     pub link_preview: Option<LinkPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effect: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<ReplyToRequest>,
 }
 
 impl SendMessage {
@@ -356,6 +397,7 @@ impl SendMessage {
             parts: None,
             link_preview: None,
             effect: None,
+            reply_to: None,
         }
     }
 
@@ -384,6 +426,27 @@ impl SendMessage {
     #[must_use]
     pub fn effect(mut self, effect: impl Into<String>) -> Self {
         self.effect = Some(effect.into());
+        self
+    }
+
+    /// Send this message as an inline reply to a previous iMessage.
+    #[must_use]
+    pub fn reply_to(mut self, reply_to: ReplyToRequest) -> Self {
+        self.reply_to = Some(reply_to);
+        self
+    }
+
+    /// Send this message as an inline reply to a Blooio-minted parent message id.
+    #[must_use]
+    pub fn reply_to_message_id(mut self, message_id: impl Into<String>) -> Self {
+        self.reply_to = Some(ReplyToRequest::message_id(message_id));
+        self
+    }
+
+    /// Send this message as an inline reply to a raw iMessage parent GUID.
+    #[must_use]
+    pub fn reply_to_guid(mut self, guid: impl Into<String>) -> Self {
+        self.reply_to = Some(ReplyToRequest::guid(guid));
         self
     }
 
@@ -1206,6 +1269,43 @@ mod tests {
         let body = msg.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v, serde_json::json!({ "text": "hi" }));
+    }
+
+    #[test]
+    fn send_body_serializes_reply_to_message_id() {
+        let msg = SendMessage::new("chat1")
+            .text("reply")
+            .reply_to_message_id("msg_parent");
+        let body = msg.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "text": "reply",
+                "reply_to": {
+                    "message_id": "msg_parent"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn send_body_serializes_reply_to_guid_with_part_index() {
+        let msg = SendMessage::new("chat1")
+            .text("reply")
+            .reply_to(ReplyToRequest::guid("raw-guid").part_index(2));
+        let body = msg.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "text": "reply",
+                "reply_to": {
+                    "guid": "raw-guid",
+                    "part_index": 2
+                }
+            })
+        );
     }
 
     #[test]
