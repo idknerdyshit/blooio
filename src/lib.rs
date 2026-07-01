@@ -55,9 +55,10 @@
 //!
 //! ## Resilience
 //!
-//! Both executors retry transient failures (transport errors and the
-//! `408`/`425`/`429`/`5xx` statuses) with jittered exponential backoff,
-//! honoring any `Retry-After` header. Tune or disable this via
+//! Both executors retry transient failures (transport errors plus `408`, `425`,
+//! unknown/no-code `429`, and `5xx` API errors) with jittered exponential
+//! backoff, honoring any `Retry-After` header. Documented quota/cap `429`
+//! errors are not retried by default. Tune or disable retrying via
 //! [`ClientConfig::with_retry`] and [`RetryPolicy`]. Mutating requests that are
 //! retried automatically carry an `Idempotency-Key`.
 //!
@@ -77,6 +78,8 @@
 //! body bytes.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(docsrs, doc(auto_cfg))]
 
 #[cfg(not(any(feature = "async", feature = "sync", feature = "webhooks")))]
 compile_error!("blooio: enable at least one of the `async`, `sync`, or `webhooks` features");
@@ -105,7 +108,7 @@ pub use core::{
     ApiResponse, Listing, Operation, Page, Pagination, Paginator, RateLimit, RawResponse,
     RequestOptions, ResponseMeta, RetryPolicy,
 };
-pub use error::{Error, Result};
+pub use error::{ApiError, ApiErrorDetails, Error, Result};
 pub use secret::Secret;
 pub use types::*;
 

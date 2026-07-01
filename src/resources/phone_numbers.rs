@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::operation::{Operation, json_body};
 use crate::error::Result;
+use crate::types::IntoStringList;
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -66,6 +67,15 @@ impl Operation for LookupPhoneNumberPost {
 pub struct BatchLookupPhoneNumbers {
     /// Phone numbers to look up in one request.
     pub numbers: Vec<String>,
+}
+
+impl BatchLookupPhoneNumbers {
+    /// Create a batch lookup request from a string collection of numbers.
+    pub fn new(numbers: impl IntoStringList) -> Self {
+        Self {
+            numbers: numbers.into_string_vec(),
+        }
+    }
 }
 
 impl Operation for BatchLookupPhoneNumbers {
@@ -133,8 +143,10 @@ impl PhoneNumbers<'_, crate::Client> {
     }
 
     /// Batch lookup multiple phone numbers.
-    pub async fn batch(&self, numbers: Vec<String>) -> Result<BatchLookupResponse> {
-        self.client.send(BatchLookupPhoneNumbers { numbers }).await
+    pub async fn batch(&self, numbers: impl IntoStringList) -> Result<BatchLookupResponse> {
+        self.client
+            .send(BatchLookupPhoneNumbers::new(numbers))
+            .await
     }
 }
 
@@ -161,8 +173,8 @@ impl PhoneNumbers<'_, crate::BlockingClient> {
     }
 
     /// Batch lookup multiple phone numbers.
-    pub fn batch(&self, numbers: Vec<String>) -> Result<BatchLookupResponse> {
-        self.client.send(BatchLookupPhoneNumbers { numbers })
+    pub fn batch(&self, numbers: impl IntoStringList) -> Result<BatchLookupResponse> {
+        self.client.send(BatchLookupPhoneNumbers::new(numbers))
     }
 }
 
@@ -245,9 +257,7 @@ mod tests {
 
     #[test]
     fn batch_body_single_number() {
-        let op = BatchLookupPhoneNumbers {
-            numbers: vec!["+15550001111".into()],
-        };
+        let op = BatchLookupPhoneNumbers::new(["+15550001111"]);
         let body = op.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v, serde_json::json!({ "numbers": ["+15550001111"] }));
@@ -255,9 +265,18 @@ mod tests {
 
     #[test]
     fn batch_body_multiple_numbers() {
-        let op = BatchLookupPhoneNumbers {
-            numbers: vec!["+15550001111".into(), "+15550002222".into()],
-        };
+        let op = BatchLookupPhoneNumbers::new(["+15550001111", "+15550002222"]);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({ "numbers": ["+15550001111", "+15550002222"] })
+        );
+    }
+
+    #[test]
+    fn batch_body_preserves_vec_string_literal_inference() {
+        let op = BatchLookupPhoneNumbers::new(vec!["+15550001111".into(), "+15550002222".into()]);
         let body = op.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(

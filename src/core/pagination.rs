@@ -74,7 +74,12 @@ impl Cursor {
             .as_ref()
             .and_then(|p| p.total)
             .is_some_and(|total| i64::from(self.offset) >= total);
-        if got < self.limit.get() || got == 0 || reached_total {
+        let has_no_more = page
+            .pagination
+            .as_ref()
+            .and_then(|p| p.has_more)
+            .is_some_and(|has_more| !has_more);
+        if got < self.limit.get() || got == 0 || reached_total || has_no_more {
             self.done = true;
         }
         page.items
@@ -87,7 +92,8 @@ impl Cursor {
 ///
 /// Resource `*_all` helpers use [`DEFAULT_PAGE_SIZE`] and stop when the API
 /// returns an empty page, a page shorter than the requested limit, metadata
-/// showing `pagination.total` has been reached, or the first fetch error.
+/// showing `pagination.total` has been reached, metadata showing
+/// `pagination.has_more` is `false`, or the first fetch error.
 pub struct Paginator<'c, C, F, O>
 where
     F: Fn(u32, u32) -> O,
@@ -302,6 +308,23 @@ mod tests {
             }),
         };
         c.advance(page);
+        assert!(c.done);
+    }
+
+    #[test]
+    fn cursor_stops_when_has_more_is_false_even_on_full_page() {
+        let mut c = Cursor::new(nz(2));
+        let page = Page {
+            items: vec![1, 2],
+            pagination: Some(Pagination {
+                limit: Some(2),
+                offset: Some(0),
+                has_more: Some(false),
+                ..Default::default()
+            }),
+        };
+        c.advance(page);
+        assert_eq!(c.offset, 2);
         assert!(c.done);
     }
 

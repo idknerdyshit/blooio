@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
-use crate::types::{Contact, DeleteResponse};
+use crate::types::{Contact, DeleteResponse, IntoStringList};
 
 // ---------------------------------------------------------------------------
 // Response types specific to this resource group.
@@ -93,7 +93,7 @@ pub struct ListContacts {
     pub offset: Option<u32>,
     /// Search text used by the API to filter contacts.
     pub q: Option<String>,
-    /// API sort expression.
+    /// API sort expression, passed through to Blooio unchanged.
     pub sort: Option<String>,
 }
 
@@ -253,6 +253,16 @@ pub struct AddContactTags {
     pub tags: Vec<String>,
 }
 
+impl AddContactTags {
+    /// Create an add-tags request from a string collection of tags.
+    pub fn new(contact_id: impl Into<String>, tags: impl IntoStringList) -> Self {
+        Self {
+            contact_id: contact_id.into(),
+            tags: tags.into_string_vec(),
+        }
+    }
+}
+
 impl Operation for AddContactTags {
     type Output = AddTagsResponse;
     const METHOD: Method = Method::POST;
@@ -398,13 +408,10 @@ impl<'c> Contacts<'c, crate::Client> {
     pub async fn add_tags(
         &self,
         contact_id: impl Into<String>,
-        tags: Vec<String>,
+        tags: impl IntoStringList,
     ) -> Result<AddTagsResponse> {
         self.client
-            .send(AddContactTags {
-                contact_id: contact_id.into(),
-                tags,
-            })
+            .send(AddContactTags::new(contact_id, tags))
             .await
     }
 
@@ -498,12 +505,9 @@ impl<'c> Contacts<'c, crate::BlockingClient> {
     pub fn add_tags(
         &self,
         contact_id: impl Into<String>,
-        tags: Vec<String>,
+        tags: impl IntoStringList,
     ) -> Result<AddTagsResponse> {
-        self.client.send(AddContactTags {
-            contact_id: contact_id.into(),
-            tags,
-        })
+        self.client.send(AddContactTags::new(contact_id, tags))
     }
 
     /// Remove a single tag from a contact.
@@ -741,19 +745,13 @@ mod tests {
 
     #[test]
     fn add_tags_path() {
-        let op = AddContactTags {
-            contact_id: "abc123".into(),
-            tags: vec!["vip".into()],
-        };
+        let op = AddContactTags::new("abc123", ["vip"]);
         assert_eq!(op.path(), "/contacts/abc123/tags");
     }
 
     #[test]
     fn add_tags_body_single_tag() {
-        let op = AddContactTags {
-            contact_id: "abc123".into(),
-            tags: vec!["vip".into()],
-        };
+        let op = AddContactTags::new("abc123", ["vip"]);
         let body = op.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v, serde_json::json!({ "tags": ["vip"] }));
@@ -761,10 +759,15 @@ mod tests {
 
     #[test]
     fn add_tags_body_multiple_tags() {
-        let op = AddContactTags {
-            contact_id: "abc123".into(),
-            tags: vec!["vip".into(), "priority".into()],
-        };
+        let op = AddContactTags::new("abc123", ["vip", "priority"]);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "tags": ["vip", "priority"] }));
+    }
+
+    #[test]
+    fn add_tags_body_preserves_vec_string_literal_inference() {
+        let op = AddContactTags::new("abc123", vec!["vip".into(), "priority".into()]);
         let body = op.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v, serde_json::json!({ "tags": ["vip", "priority"] }));

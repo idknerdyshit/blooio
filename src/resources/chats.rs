@@ -2,15 +2,15 @@
 //! `sendMessage`), reactions, typing indicators, read receipts, polls, chat
 //! background, and contact-card sharing.
 
-use http::Method;
+use http::{Method, header::HeaderValue};
 use serde::{Deserialize, Serialize};
 
 use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::types::{
-    Chat, ChatBackgroundResponse, Json, LinkPreview, Message, MessageDetail, MessageStatus,
-    ReactionResponse, ReadResponse, SendMessageResponse, TypingResponse,
+    Chat, ChatBackgroundResponse, IntoStringList, Json, LinkPreview, Message, MessageDetail,
+    MessageStatus, ReactionResponse, ReadResponse, SendMessageResponse, TypingResponse,
 };
 
 // ===========================================================================
@@ -41,6 +41,13 @@ impl From<String> for Text {
 impl From<Vec<String>> for Text {
     fn from(v: Vec<String>) -> Self {
         Text::Many(v)
+    }
+}
+
+impl Text {
+    /// Build multi-message text from a string collection.
+    pub fn many(values: impl IntoStringList) -> Self {
+        Text::Many(values.into_string_vec())
     }
 }
 
@@ -214,7 +221,7 @@ fn multipart_background_body(
     boundary: &str,
     background: &[u8],
     filename: Option<&str>,
-    content_type: Option<&str>,
+    content_type: &str,
 ) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(b"--");
@@ -226,17 +233,19 @@ fn multipart_background_body(
         body.extend_from_slice(b"\"");
     }
     body.extend_from_slice(b"\r\nContent-Type: ");
-    body.extend_from_slice(
-        content_type
-            .unwrap_or("application/octet-stream")
-            .as_bytes(),
-    );
+    body.extend_from_slice(content_type.as_bytes());
     body.extend_from_slice(b"\r\n\r\n");
     body.extend_from_slice(background);
     body.extend_from_slice(b"\r\n--");
     body.extend_from_slice(boundary.as_bytes());
     body.extend_from_slice(b"--\r\n");
     body
+}
+
+fn multipart_part_content_type(content_type: Option<&str>) -> Result<&str> {
+    let content_type = content_type.unwrap_or("application/octet-stream");
+    HeaderValue::from_str(content_type).map_err(Error::config)?;
+    Ok(content_type)
 }
 
 fn escape_multipart_header_value(value: &str) -> String {
@@ -273,7 +282,7 @@ pub struct ListChats {
     pub offset: Option<u32>,
     /// Search text used by the API to filter chats.
     pub q: Option<String>,
-    /// API sort expression.
+    /// API sort expression, passed through to Blooio unchanged.
     pub sort: Option<String>,
 }
 
@@ -319,9 +328,9 @@ pub struct ListChatMessages {
     pub limit: Option<u32>,
     /// Number of messages to skip before returning results.
     pub offset: Option<u32>,
-    /// API sort expression.
+    /// API sort expression, passed through to Blooio unchanged.
     pub sort: Option<String>,
-    /// Message sort direction, as accepted by the API.
+    /// Message sort direction, passed through to Blooio unchanged.
     pub direction: Option<String>,
     /// Lower timestamp bound for messages, expressed as the API expects.
     pub since: Option<i64>,
@@ -399,7 +408,7 @@ pub struct SendMessage {
     /// Rich link-preview override.
     pub link_preview: Option<LinkPreview>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// iMessage effect name, such as `confetti` or `slam`.
+    /// iMessage effect name, passed through to Blooio unchanged.
     pub effect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Parent message target for an inline reply.
@@ -445,7 +454,8 @@ impl SendMessage {
         self
     }
 
-    /// Send with an iMessage effect (e.g. `"confetti"`).
+    /// Send with an iMessage effect (e.g. `"confetti"`), passed through to
+    /// Blooio unchanged.
     #[must_use]
     pub fn effect(mut self, effect: impl Into<String>) -> Self {
         self.effect = Some(effect.into());
@@ -580,10 +590,11 @@ pub struct AddReaction {
     #[serde(skip)]
     /// Blooio message id to react to.
     pub message_id: String,
-    /// Reaction value accepted by the API.
+    /// Reaction value accepted by the API, passed through unchanged.
     pub reaction: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Reaction direction, when the API distinguishes add/remove style actions.
+    /// Reaction direction, passed through unchanged when the API distinguishes
+    /// add/remove style actions.
     pub direction: Option<String>,
 }
 
@@ -624,6 +635,21 @@ impl Operation for SendPoll {
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         json_body(self)
+    }
+}
+
+impl SendPoll {
+    /// Create a poll request from a string collection of option values.
+    pub fn new(
+        chat_id: impl Into<String>,
+        title: Option<String>,
+        options: impl IntoStringList,
+    ) -> Self {
+        SendPoll {
+            chat_id: chat_id.into(),
+            title,
+            options: options.into_string_vec(),
+        }
     }
 }
 
@@ -769,18 +795,14 @@ impl SetChatBackground {
         self
     }
 
-    fn boundary(&self) -> &'static str {
-        const BOUNDARIES: [&str; 4] = [
-            "blooio-form-boundary-0",
-            "blooio-form-boundary-1",
-            "blooio-form-boundary-2",
-            "blooio-form-boundary-3",
-        ];
-        BOUNDARIES
-            .iter()
-            .copied()
-            .find(|boundary| !contains_bytes(&self.background, boundary.as_bytes()))
-            .unwrap_or(BOUNDARIES[0])
+    fn boundary(&self) -> String {
+        for index in 0u64.. {
+            let boundary = format!("blooio-form-boundary-{index}");
+            if !contains_bytes(&self.background, boundary.as_bytes()) {
+                return boundary;
+            }
+        }
+        unreachable!("unbounded boundary search must find a value absent from a finite payload")
     }
 }
 
@@ -791,17 +813,20 @@ impl Operation for SetChatBackground {
         format!("/chats/{}/background", encode_path_segment(&self.chat_id))
     }
     fn headers(&self) -> Vec<(&'static str, String)> {
+        let boundary = self.boundary();
         vec![(
             "Content-Type",
-            format!("multipart/form-data; boundary={}", self.boundary()),
+            format!("multipart/form-data; boundary={boundary}"),
         )]
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
+        let boundary = self.boundary();
+        let content_type = multipart_part_content_type(self.content_type.as_deref())?;
         Ok(Some(multipart_background_body(
-            self.boundary(),
+            &boundary,
             &self.background,
             self.filename.as_deref(),
-            self.content_type.as_deref(),
+            content_type,
         )))
     }
 }
@@ -1017,14 +1042,10 @@ impl<'c> Chat_<'c, crate::Client> {
     pub async fn send_poll(
         &self,
         title: Option<String>,
-        options: Vec<String>,
+        options: impl IntoStringList,
     ) -> Result<SendPollResponse> {
         self.client
-            .send(SendPoll {
-                chat_id: self.chat_id.clone(),
-                title,
-                options,
-            })
+            .send(SendPoll::new(self.chat_id.clone(), title, options))
             .await
     }
 
@@ -1200,13 +1221,10 @@ impl<'c> Chat_<'c, crate::BlockingClient> {
     pub fn send_poll(
         &self,
         title: Option<String>,
-        options: Vec<String>,
+        options: impl IntoStringList,
     ) -> Result<SendPollResponse> {
-        self.client.send(SendPoll {
-            chat_id: self.chat_id.clone(),
-            title,
-            options,
-        })
+        self.client
+            .send(SendPoll::new(self.chat_id.clone(), title, options))
     }
 
     /// Fetch poll results.
@@ -1292,6 +1310,18 @@ mod tests {
     }
 
     #[test]
+    fn text_many_accepts_iterable_strings() {
+        let many = serde_json::to_string(&Text::many(["a", "b"])).unwrap();
+        assert_eq!(many, "[\"a\",\"b\"]");
+    }
+
+    #[test]
+    fn text_many_preserves_vec_string_literal_inference() {
+        let many = serde_json::to_string(&Text::many(vec!["a".into(), "b".into()])).unwrap();
+        assert_eq!(many, "[\"a\",\"b\"]");
+    }
+
+    #[test]
     fn auto_idempotency_key_is_generated() {
         let msg = SendMessage::new("chat1").text("hello");
         let headers = msg.headers();
@@ -1356,6 +1386,38 @@ mod tests {
     }
 
     #[test]
+    fn send_poll_new_accepts_iterable_options() {
+        let op = SendPoll::new("chat1", Some("Choose".into()), ["yes", "no"]);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "title": "Choose",
+                "options": ["yes", "no"]
+            })
+        );
+    }
+
+    #[test]
+    fn send_poll_new_preserves_vec_string_literal_inference() {
+        let op = SendPoll::new(
+            "chat1",
+            Some("Choose".into()),
+            vec!["yes".into(), "no".into()],
+        );
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "title": "Choose",
+                "options": ["yes", "no"]
+            })
+        );
+    }
+
+    #[test]
     fn set_background_path_encodes_chat_id() {
         let op = SetChatBackground::new("+15551234567", vec![1, 2, 3]);
         assert_eq!(op.path(), "/chats/%2B15551234567/background");
@@ -1397,5 +1459,31 @@ mod tests {
                 "multipart/form-data; boundary=blooio-form-boundary-1".into()
             )]
         );
+    }
+
+    #[test]
+    fn set_background_boundary_searches_past_all_collisions() {
+        let background =
+            b"blooio-form-boundary-0 blooio-form-boundary-1 blooio-form-boundary-2".to_vec();
+        let op = SetChatBackground::new("chat1", background);
+        assert_eq!(
+            op.headers(),
+            vec![(
+                "Content-Type",
+                "multipart/form-data; boundary=blooio-form-boundary-3".into()
+            )]
+        );
+        let body = String::from_utf8(op.body().unwrap().unwrap()).unwrap();
+        assert!(body.contains("--blooio-form-boundary-3\r\n"));
+        assert!(body.ends_with("\r\n--blooio-form-boundary-3--\r\n"));
+    }
+
+    #[test]
+    fn set_background_rejects_malformed_content_type() {
+        let err = SetChatBackground::new("chat1", vec![1, 2, 3])
+            .content_type("image/png\r\nX-Injected: yes")
+            .body()
+            .unwrap_err();
+        assert!(matches!(err, crate::Error::Config(_)));
     }
 }

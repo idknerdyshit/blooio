@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
-use crate::types::{DeleteResponse, Group, GroupIconResponse, GroupMember, Json};
+use crate::types::{DeleteResponse, Group, GroupIconResponse, GroupMember, IntoStringList, Json};
 
 // ---------------------------------------------------------------------------
 // Response types specific to this resource group.
@@ -86,7 +86,7 @@ pub struct ListGroups {
     pub offset: Option<u32>,
     /// Search text used by the API to filter groups.
     pub q: Option<String>,
-    /// API sort expression.
+    /// API sort expression, passed through to Blooio unchanged.
     pub sort: Option<String>,
 }
 
@@ -139,8 +139,8 @@ impl CreateGroup {
 
     /// Set the initial member list.
     #[must_use]
-    pub fn members(mut self, v: Vec<String>) -> Self {
-        self.members = Some(v);
+    pub fn members(mut self, v: impl IntoStringList) -> Self {
+        self.members = Some(v.into_string_vec());
         self
     }
 }
@@ -704,11 +704,9 @@ mod tests {
 
     #[test]
     fn create_group_body_populated() {
-        let op = CreateGroup {
-            name: "MyGroup".into(),
-            chat_guid: Some("chat-abc".into()),
-            members: Some(vec!["m1".into(), "m2".into()]),
-        };
+        let op = CreateGroup::new("MyGroup")
+            .chat_guid("chat-abc")
+            .members(["m1", "m2"]);
         let body = op.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
@@ -716,6 +714,20 @@ mod tests {
             serde_json::json!({
                 "name": "MyGroup",
                 "chat_guid": "chat-abc",
+                "members": ["m1", "m2"]
+            })
+        );
+    }
+
+    #[test]
+    fn create_group_members_preserves_vec_string_literal_inference() {
+        let op = CreateGroup::new("MyGroup").members(vec!["m1".into(), "m2".into()]);
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "name": "MyGroup",
                 "members": ["m1", "m2"]
             })
         );

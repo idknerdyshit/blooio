@@ -17,6 +17,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use blooio::error::codes;
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
 use blooio::resources::webhooks::CreateWebhook;
@@ -575,7 +576,10 @@ async fn error_response_maps_to_api_error() {
             "error": "rate_limited",
             "message": "slow down",
             "status": 429,
-            "code": "outbound_limit_reached"
+            "code": "outbound_limit_reached",
+            "limit": 10,
+            "current": 10,
+            "mode": "organization"
         })))
         .mount(&server)
         .await;
@@ -587,7 +591,19 @@ async fn error_response_maps_to_api_error() {
         .await
         .unwrap_err();
     assert_eq!(err.status(), Some(429));
-    assert_eq!(err.code(), Some("outbound_limit_reached"));
+    assert_eq!(err.code(), Some(codes::OUTBOUND_LIMIT_REACHED));
+    assert!(err.is_quota_error());
+    assert!(!err.is_retryable());
+    let blooio::Error::Api(api) = err else {
+        panic!("expected api error");
+    };
+    assert_eq!(api.error(), Some("rate_limited"));
+    assert_eq!(api.server_message(), Some("slow down"));
+    assert_eq!(api.details().get("limit"), Some(&serde_json::json!(10)));
+    assert_eq!(
+        api.details().get("mode"),
+        Some(&serde_json::json!("organization"))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -953,7 +969,7 @@ async fn phone_numbers_batch_posts_numbers_and_returns_results() {
     let resp = client(&server)
         .await
         .phone_numbers()
-        .batch(vec!["+15550001111".into(), "+15550002222".into()])
+        .batch(["+15550001111", "+15550002222"])
         .await
         .unwrap();
     assert_eq!(resp.results.len(), 2);
@@ -988,9 +1004,9 @@ async fn custom_user_agent_is_sent() {
 }
 
 #[tokio::test]
-async fn retries_transient_429_then_succeeds() {
+async fn retries_unknown_429_then_succeeds() {
     let server = MockServer::start().await;
-    // First attempt: 429 with a Retry-After hint. Exhausted after one match.
+    // First attempt: unknown 429 with a Retry-After hint. Exhausted after one match.
     Mock::given(method("POST"))
         .and(path("/contacts"))
         .respond_with(
@@ -998,7 +1014,7 @@ async fn retries_transient_429_then_succeeds() {
                 .insert_header("retry-after", "0")
                 .set_body_json(serde_json::json!({
                     "error": "rate_limited",
-                    "code": "outbound_limit_reached"
+                    "code": "temporarily_rate_limited"
                 })),
         )
         .up_to_n_times(1)
@@ -1024,6 +1040,46 @@ async fn retries_transient_429_then_succeeds() {
         .await
         .unwrap();
     assert_eq!(contact.id.as_deref(), Some("c1"));
+}
+
+#[tokio::test]
+async fn does_not_retry_documented_quota_429() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/contacts"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "0")
+                .set_body_json(serde_json::json!({
+                    "error": "rate_limited",
+                    "code": "new_conversation_limit_reached",
+                    "plan_id": "plan_123",
+                    "cap": 50,
+                    "current": 50
+                })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let err = retrying_client(&server, 2)
+        .contacts()
+        .create(CreateContact::new("+15550001111").name("Alice"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.status(), Some(429));
+    assert_eq!(err.code(), Some(codes::NEW_CONVERSATION_LIMIT_REACHED));
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
+    assert!(err.is_quota_error());
+    assert!(!err.is_retryable());
+    let blooio::Error::Api(api) = err else {
+        panic!("expected api error");
+    };
+    assert_eq!(
+        api.details().get("plan_id"),
+        Some(&serde_json::json!("plan_123"))
+    );
+    assert_eq!(api.details().get("cap"), Some(&serde_json::json!(50)));
 }
 
 #[tokio::test]
