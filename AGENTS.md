@@ -62,10 +62,12 @@ cargo clippy --all-features --all-targets -- -D warnings
 cargo clippy --no-default-features --features sync,webhooks --all-targets -- -D warnings
 ```
 
-Run documentation checks when public API or docs change:
+Run documentation checks when public API or docs change. Use nightly for this
+docs.rs-style gate because the crate enables `doc_cfg`/`doc(auto_cfg)` under
+`--cfg docsrs`:
 
 ```sh
-RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo doc --all-features --no-deps
+RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc --all-features --no-deps
 ```
 
 ## Testing Instructions

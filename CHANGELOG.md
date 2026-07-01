@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-01
+
+### Added
+
+- Added `ApiError` and `ApiErrorDetails` so callers can inspect HTTP status,
+  machine-readable codes, retry hints, raw server messages, and documented
+  structured error details explicitly.
+- Added documented Blooio API error code constants and predicates for quota,
+  inbound-only, and threaded-reply target failures.
+- Added iterable string collection ergonomics for batch phone-number lookup,
+  contact tags, group members, poll options, and multi-message text values.
+
+### Changed
+
+- Promoted the crate to the `1.0.0` API surface and updated install examples to
+  use `blooio = "1"`.
+- Documented loose JSON response fields and string pass-through parameters as
+  intentional forward-compatible API choices.
+- Changed API errors to keep server-provided messages and structured details
+  out of `Display` and `Debug`, while preserving them behind explicit
+  accessors.
+- Changed retry classification so documented quota/cap `429` errors are not
+  retried by default; unknown or no-code `429` responses remain retryable.
+- Refreshed transitive dependencies and updated the `httpmock` dev-dependency
+  to the current `0.8` line.
+- Tightened the lint policy with additional public-API, conversion, and string
+  slicing checks.
+
+### Fixed
+
+- Stop paginators when response metadata says `pagination.has_more` is `false`,
+  even if the page is full.
+- Harden chat-background multipart uploads by searching past boundary
+  collisions and rejecting malformed part content types.
+
 ## [0.4.0] - 2026-06-30
 
 ### Added
@@ -129,7 +164,8 @@ Initial release.
   `blooio.request` span per request carrying method, path, status, and elapsed.
 - Dual-licensed under MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/idknerdyshit/blooio/compare/v0.4.0...v1.0.0
 [0.4.0]: https://github.com/idknerdyshit/blooio/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/idknerdyshit/blooio/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/idknerdyshit/blooio/compare/v0.3.0...v0.3.1
