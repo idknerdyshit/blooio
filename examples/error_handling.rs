@@ -9,7 +9,7 @@
 
 use std::env;
 
-use blooio::{Client, Error};
+use blooio::{Client, Error, error::codes};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,19 +19,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match chat.send_text("hello").await {
         Ok(resp) => println!("delivered: {:?}", resp.ids()),
 
+        // Documented quota/cap errors are not automatically retryable.
+        Err(Error::Api(api)) if api.is_quota_error() => {
+            println!(
+                "quota cap reached: status={} code={:?} current={:?}",
+                api.status(),
+                api.code(),
+                api.details().get("current")
+            );
+        }
+
         // A non-2xx response. Match on `code` for stable handling rather than
         // scraping the human-readable message.
-        Err(Error::Api {
-            status,
-            code,
-            message,
-            ..
-        }) => match code.as_deref() {
-            Some("outbound_limit_reached") => {
-                println!("rate limited — back off and retry later");
+        Err(Error::Api(api)) => match api.code() {
+            Some(codes::REPLY_TARGET_NOT_FOUND) => {
+                println!("the message being replied to no longer exists");
             }
             Some("invalid_chat") => println!("that chat id doesn't exist"),
-            _ => println!("api error {status}: {message}"),
+            _ => println!("api error {}: {api}", api.status()),
         },
 
         // Connection / DNS / TLS / timeout — usually worth retrying.

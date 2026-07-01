@@ -1,16 +1,94 @@
 //! Shared serde models mirroring `components.schemas` from the `OpenAPI` spec.
 //!
-//! Fields are modelled as `Option` wherever the API may omit them, and
-//! untyped JSON objects are kept as [`serde_json::Value`] so forward-compatible
-//! fields are preserved rather than dropped.
+//! Fields are modelled as `Option` wherever the API may omit them. Server-owned
+//! nested objects are intentionally kept as [`serde_json::Value`] so
+//! forward-compatible fields are preserved rather than guessed and dropped.
+//! String status, direction, reaction, webhook-type, and protocol fields mirror
+//! Blooio's raw values so new API vocabulary does not require an SDK release.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::secret::Secret;
 
-/// Free-form JSON value alias used for loosely-typed API fields.
+/// Free-form JSON value alias used for intentionally opaque API fields.
+///
+/// These fields represent server-owned nested objects whose schema may evolve
+/// independently of the SDK. Keeping them as JSON is a stability choice, not
+/// unfinished typing.
 pub type Json = Value;
+
+mod string_list_sealed {
+    pub(crate) trait Sealed {}
+
+    impl Sealed for Vec<String> {}
+    impl<const N: usize> Sealed for [String; N] {}
+    impl<const N: usize> Sealed for [&str; N] {}
+    impl Sealed for &[String] {}
+    impl Sealed for &[&str] {}
+    impl Sealed for &Vec<String> {}
+    impl<const N: usize> Sealed for &[String; N] {}
+    impl<const N: usize> Sealed for &[&str; N] {}
+}
+
+/// A collection that can be converted into the `Vec<String>` body fields used
+/// by batch-style requests.
+///
+/// This accepts owned `Vec<String>` values, string arrays, and string slices
+/// while preserving inference for existing `vec!["value".into()]` call sites.
+#[allow(private_bounds)]
+pub trait IntoStringList: string_list_sealed::Sealed {
+    /// Convert this collection into owned strings.
+    fn into_string_vec(self) -> Vec<String>;
+}
+
+impl IntoStringList for Vec<String> {
+    fn into_string_vec(self) -> Vec<String> {
+        self
+    }
+}
+
+impl<const N: usize> IntoStringList for [String; N] {
+    fn into_string_vec(self) -> Vec<String> {
+        self.into_iter().collect()
+    }
+}
+
+impl<const N: usize> IntoStringList for [&str; N] {
+    fn into_string_vec(self) -> Vec<String> {
+        self.into_iter().map(str::to_owned).collect()
+    }
+}
+
+impl IntoStringList for &[String] {
+    fn into_string_vec(self) -> Vec<String> {
+        self.to_vec()
+    }
+}
+
+impl IntoStringList for &[&str] {
+    fn into_string_vec(self) -> Vec<String> {
+        self.iter().map(|value| (*value).to_owned()).collect()
+    }
+}
+
+impl IntoStringList for &Vec<String> {
+    fn into_string_vec(self) -> Vec<String> {
+        self.clone()
+    }
+}
+
+impl<const N: usize> IntoStringList for &[String; N] {
+    fn into_string_vec(self) -> Vec<String> {
+        self.to_vec()
+    }
+}
+
+impl<const N: usize> IntoStringList for &[&str; N] {
+    fn into_string_vec(self) -> Vec<String> {
+        self.iter().map(|value| (*value).to_owned()).collect()
+    }
+}
 
 /// Result of a phone-number lookup.
 #[allow(missing_docs)]

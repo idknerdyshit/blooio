@@ -28,21 +28,21 @@ compile time).
 
 ```toml
 [dependencies]
-blooio = "0.3"
+blooio = "1"
 ```
 
 Blocking client only, no async runtime:
 
 ```toml
 [dependencies]
-blooio = { version = "0.3", default-features = false, features = ["sync", "rustls", "webhooks"] }
+blooio = { version = "1", default-features = false, features = ["sync", "rustls", "webhooks"] }
 ```
 
 Webhook parsing and verification only, no Blooio API HTTP client:
 
 ```toml
 [dependencies]
-blooio = { version = "0.3", default-features = false, features = ["webhooks"] }
+blooio = { version = "1", default-features = false, features = ["webhooks"] }
 ```
 
 ## Quick start (async)
@@ -194,6 +194,13 @@ let account = client
 # Ok(()) }
 ```
 
+### Forward-compatible fields
+
+Some response fields use `blooio::Json` for server-owned nested objects whose
+shape is intentionally allowed to evolve. String values such as effects,
+reactions, directions, webhook types, sort expressions, and message statuses
+are passed through to Blooio unchanged rather than constrained to SDK enums.
+
 ## Configuration
 
 `Client::from_env()` and `BlockingClient::from_env()` read `BLOOIO_API_KEY`
@@ -233,9 +240,10 @@ cleartext.
 
 ### Retries and rate limits
 
-Transient failures are retried by default with jittered backoff. Customize that
-behavior with `ClientConfig::with_retry`, or pass `RetryPolicy::none()` to
-disable it.
+Transient failures are retried by default with jittered backoff. Unknown or
+no-code `429` responses are treated as transient, but documented quota/cap
+`429` errors are not retried by default. Customize retry behavior with
+`ClientConfig::with_retry`, or pass `RetryPolicy::none()` to disable it.
 
 Per-request transport options are available at the executor layer. Extra
 headers override operation headers except `Authorization`, which is always
@@ -305,8 +313,12 @@ for programmatic handling:
 
 ```rust,no_run
 # fn handle(err: blooio::Error) {
-if err.code() == Some("outbound_limit_reached") {
-    // back off and retry later
+use blooio::error::codes;
+
+if err.is_quota_error() {
+    // A documented account/plan cap was reached; do not blindly retry.
+} else if err.code() == Some(codes::REPLY_TARGET_NOT_FOUND) {
+    // The threaded-reply target no longer exists.
 }
 # }
 ```

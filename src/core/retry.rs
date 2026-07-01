@@ -10,10 +10,11 @@ use crate::error::Error;
 /// Controls automatic retries of transient failures.
 ///
 /// A request is retried only when [`Error::is_retryable`] is `true` (transport
-/// errors and the transient statuses `408`/`425`/`429`/`5xx`) and the attempt
-/// budget is not yet spent. The delay before each retry is the larger-priority
-/// of the server's `Retry-After` hint (when present) or exponential backoff
-/// with optional full jitter, clamped to [`max_delay`](Self::max_delay).
+/// errors and the transient statuses `408`/`425`, unknown/no-code `429`, and
+/// `5xx`) and the attempt budget is not yet spent. The delay before each retry
+/// is the larger-priority of the server's `Retry-After` hint (when present) or
+/// exponential backoff with optional full jitter, clamped to
+/// [`max_delay`](Self::max_delay).
 #[derive(Debug, Clone, Copy)]
 pub struct RetryPolicy {
     /// Maximum number of retries *after* the initial attempt. `0` disables
@@ -140,15 +141,21 @@ fn jitter_fraction() -> f64 {
 )]
 mod tests {
     use super::*;
+    use crate::error::{ApiError, ApiErrorDetails, codes};
 
     fn api_err(status: u16, retry_after: Option<Duration>) -> Error {
-        Error::Api {
+        api_err_with_code(status, None, retry_after)
+    }
+
+    fn api_err_with_code(status: u16, code: Option<&str>, retry_after: Option<Duration>) -> Error {
+        Error::Api(ApiError::from_schema(
             status,
-            code: None,
-            message: "x".into(),
-            error: None,
+            code.map(str::to_owned),
+            None,
+            None,
+            ApiErrorDetails::default(),
             retry_after,
-        }
+        ))
     }
 
     #[test]
@@ -164,6 +171,28 @@ mod tests {
         assert!(p.should_retry(0, &api_err(429, None)));
         assert!(p.should_retry(1, &api_err(503, None)));
         assert!(!p.should_retry(2, &api_err(503, None)));
+    }
+
+    #[test]
+    fn does_not_retry_documented_quota_429_codes() {
+        let p = RetryPolicy::default();
+        assert!(!p.should_retry(
+            0,
+            &api_err_with_code(429, Some(codes::OUTBOUND_LIMIT_REACHED), None)
+        ));
+        assert!(!p.should_retry(
+            0,
+            &api_err_with_code(429, Some(codes::NEW_CONVERSATION_LIMIT_REACHED), None)
+        ));
+    }
+
+    #[test]
+    fn retries_unknown_429_codes() {
+        let p = RetryPolicy::default();
+        assert!(p.should_retry(
+            0,
+            &api_err_with_code(429, Some("temporarily_rate_limited"), None)
+        ));
     }
 
     #[test]

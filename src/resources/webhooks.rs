@@ -113,7 +113,8 @@ pub struct CreateWebhook {
     /// Public URL that Blooio should deliver webhook events to.
     pub webhook_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Webhook type/scope selector accepted by the API.
+    /// Webhook type/scope selector accepted by the API, passed through
+    /// unchanged.
     pub webhook_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Optional expiry timestamp, expressed as the API expects.
@@ -130,7 +131,7 @@ impl CreateWebhook {
         }
     }
 
-    /// Set the webhook type.
+    /// Set the webhook type, passed through to Blooio unchanged.
     #[must_use]
     pub fn webhook_type(mut self, v: impl Into<String>) -> Self {
         self.webhook_type = Some(v.into());
@@ -180,7 +181,8 @@ pub struct UpdateWebhook {
     /// Blooio webhook id.
     pub webhook_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// Replacement webhook type/scope selector accepted by the API.
+    /// Replacement webhook type/scope selector accepted by the API, passed
+    /// through unchanged.
     pub webhook_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Replacement expiry timestamp, expressed as the API expects.
@@ -201,7 +203,7 @@ impl UpdateWebhook {
         }
     }
 
-    /// Set the webhook type.
+    /// Set the webhook type, passed through to Blooio unchanged.
     #[must_use]
     pub fn webhook_type(mut self, v: impl Into<String>) -> Self {
         self.webhook_type = Some(v.into());
@@ -279,7 +281,7 @@ pub struct ListWebhookLogs {
     pub limit: Option<u32>,
     /// Number of log entries to skip before returning results.
     pub offset: Option<u32>,
-    /// API sort expression.
+    /// API sort expression, passed through to Blooio unchanged.
     pub sort: Option<String>,
     /// Exact HTTP status filter.
     pub status: Option<i64>,

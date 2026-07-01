@@ -38,10 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Polls take an optional title and the list of options.
     let poll = chat
-        .send_poll(
-            Some("Ship it?".into()),
-            vec!["Yes".into(), "Needs work".into()],
-        )
+        .send_poll(Some("Ship it?".into()), ["Yes", "Needs work"])
         .await?;
     println!("poll sent: {poll:?}");
 

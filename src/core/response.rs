@@ -4,15 +4,15 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
-use crate::error::{ApiErrorBody, Error, Result};
+use crate::error::{ApiError, ApiErrorBody, ApiErrorDetails, Error, Result};
 
 /// Parse a raw HTTP response into the operation's output type, or map a non-2xx
 /// status to [`Error::Api`].
 ///
 /// On success the body is deserialized into `T`. On failure the body is decoded
 /// from the Blooio `Error` schema where possible. Raw server-provided prose is
-/// omitted from the stored/displayed error message so reflected request data
-/// cannot leak through logs.
+/// stored only for explicit accessor use and is omitted from displayed/logged
+/// error messages so reflected request data cannot leak through logs.
 pub fn parse<T: DeserializeOwned>(status: u16, bytes: &[u8]) -> Result<T> {
     parse_with(status, bytes, None)
 }
@@ -38,32 +38,16 @@ pub fn parse_with<T: DeserializeOwned>(
 /// Map a non-2xx response body to [`Error::Api`].
 pub fn map_error(status: u16, bytes: &[u8], retry_after: Option<Duration>) -> Error {
     if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
-        let message = safe_api_message(status, body.code.as_deref(), body.error.as_deref());
-        Error::Api {
+        Error::Api(ApiError::from_schema(
             status,
-            code: body.code,
-            message,
-            error: body.error,
+            body.code,
+            body.error,
+            body.message,
+            ApiErrorDetails::new(body.details),
             retry_after,
-        }
+        ))
     } else {
-        Error::Api {
-            status,
-            code: None,
-            message: format!("HTTP {status} (non-schema error body omitted)"),
-            error: None,
-            retry_after,
-        }
-    }
-}
-
-fn safe_api_message(status: u16, code: Option<&str>, error: Option<&str>) -> String {
-    if let Some(code) = code {
-        format!("HTTP {status} ({code})")
-    } else if let Some(error) = error {
-        format!("HTTP {status} ({error})")
-    } else {
-        format!("HTTP {status}")
+        Error::Api(ApiError::from_non_schema(status, retry_after))
     }
 }
 
@@ -92,20 +76,26 @@ mod tests {
 
     #[test]
     fn maps_error_schema() {
-        let body = br#"{"error":"rate_limited","message":"slow down","status":429,"code":"outbound_limit_reached"}"#;
+        let body = br#"{"error":"rate_limited","message":"slow down","status":429,"code":"outbound_limit_reached","limit":10,"current":10}"#;
         let err = parse::<Thing>(429, body).unwrap_err();
         match err {
-            Error::Api {
-                status,
-                code,
-                message,
-                error,
-                ..
-            } => {
-                assert_eq!(status, 429);
-                assert_eq!(code.as_deref(), Some("outbound_limit_reached"));
-                assert_eq!(message, "HTTP 429 (outbound_limit_reached)");
-                assert_eq!(error.as_deref(), Some("rate_limited"));
+            Error::Api(api) => {
+                assert_eq!(api.status(), 429);
+                assert_eq!(api.code(), Some("outbound_limit_reached"));
+                assert_eq!(
+                    api.to_string(),
+                    "blooio api error (status 429, code outbound_limit_reached): HTTP 429 (outbound_limit_reached)"
+                );
+                assert_eq!(api.error(), Some("rate_limited"));
+                assert_eq!(api.server_message(), Some("slow down"));
+                assert_eq!(
+                    api.details().get("limit"),
+                    Some(&serde_json::Value::from(10))
+                );
+                assert_eq!(
+                    api.details().get("current"),
+                    Some(&serde_json::Value::from(10))
+                );
             }
             other => panic!("expected Api error, got {other:?}"),
         }
@@ -120,6 +110,33 @@ mod tests {
             !err.to_string().contains("sk-secret-123"),
             "structured error message leaked into Display"
         );
+        assert!(
+            !format!("{err:?}").contains("sk-secret-123"),
+            "structured error message leaked into Debug"
+        );
+        let Error::Api(api) = err else {
+            panic!("expected Api error");
+        };
+        assert_eq!(api.server_message(), Some("bad token sk-secret-123"));
+    }
+
+    #[test]
+    fn structured_error_details_are_explicit_and_redacted_in_debug() {
+        let body = br#"{"message":"quota hit sk-secret-123","status":429,"code":"new_conversation_limit_reached","plan_id":"plan_123","cap":50,"current":50}"#;
+        let err = parse::<Thing>(429, body).unwrap_err();
+        let debug = format!("{err:?}");
+
+        assert!(!debug.contains("plan_123"));
+        assert!(!debug.contains("sk-secret-123"));
+        let Error::Api(api) = err else {
+            panic!("expected Api error");
+        };
+        assert_eq!(
+            api.details().get("plan_id"),
+            Some(&serde_json::json!("plan_123"))
+        );
+        assert_eq!(api.details().get("cap"), Some(&serde_json::json!(50)));
+        assert_eq!(api.details().as_object().len(), 3);
     }
 
     #[test]

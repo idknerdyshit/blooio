@@ -11,6 +11,7 @@
 
 use std::time::Duration;
 
+use blooio::error::codes;
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
 use blooio::resources::webhooks::CreateWebhook;
@@ -63,6 +64,89 @@ fn retries_transient_5xx_until_budget_exhausted() {
     m.assert_hits(3);
     assert_eq!(err.status(), Some(503));
     assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
+}
+
+#[test]
+fn retries_unknown_429_code_until_budget_exhausted() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/contacts");
+        then.status(429)
+            .header("retry-after", "0")
+            .json_body(serde_json::json!({
+                "error": "rate_limited",
+                "code": "temporarily_rate_limited"
+            }));
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.base_url())
+            .with_retry(
+                RetryPolicy::default()
+                    .with_max_retries(1)
+                    .with_base_delay(Duration::from_millis(1))
+                    .with_jitter(false),
+            ),
+    )
+    .unwrap();
+
+    let err = client
+        .contacts()
+        .create(CreateContact::new("+15550001111"))
+        .unwrap_err();
+    m.assert_hits(2);
+    assert_eq!(err.status(), Some(429));
+    assert_eq!(err.code(), Some("temporarily_rate_limited"));
+    assert!(err.is_retryable());
+}
+
+#[test]
+fn does_not_retry_documented_quota_429() {
+    let server = MockServer::start();
+    let m = server.mock(|when, then| {
+        when.method(POST).path("/contacts");
+        then.status(429)
+            .header("retry-after", "0")
+            .json_body(serde_json::json!({
+                "error": "rate_limited",
+                "code": "new_conversation_limit_reached",
+                "plan_id": "plan_123",
+                "cap": 50,
+                "current": 50
+            }));
+    });
+
+    let client = BlockingClient::from_config(
+        ClientConfig::new("test-key")
+            .with_base_url(server.base_url())
+            .with_retry(
+                RetryPolicy::default()
+                    .with_max_retries(2)
+                    .with_base_delay(Duration::from_millis(1))
+                    .with_jitter(false),
+            ),
+    )
+    .unwrap();
+
+    let err = client
+        .contacts()
+        .create(CreateContact::new("+15550001111"))
+        .unwrap_err();
+    m.assert_hits(1);
+    assert_eq!(err.status(), Some(429));
+    assert_eq!(err.code(), Some(codes::NEW_CONVERSATION_LIMIT_REACHED));
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
+    assert!(err.is_quota_error());
+    assert!(!err.is_retryable());
+    let blooio::Error::Api(api) = err else {
+        panic!("expected api error");
+    };
+    assert_eq!(
+        api.details().get("plan_id"),
+        Some(&serde_json::json!("plan_123"))
+    );
+    assert_eq!(api.details().get("cap"), Some(&serde_json::json!(50)));
 }
 
 #[test]
@@ -496,13 +580,28 @@ fn error_response_maps_to_api_error() {
             "error": "rate_limited",
             "message": "slow down",
             "status": 429,
-            "code": "outbound_limit_reached"
+            "code": "outbound_limit_reached",
+            "limit": 10,
+            "current": 10,
+            "mode": "organization"
         }));
     });
 
     let err = client(&server).chat("chat1").send_text("hi").unwrap_err();
     assert_eq!(err.status(), Some(429));
-    assert_eq!(err.code(), Some("outbound_limit_reached"));
+    assert_eq!(err.code(), Some(codes::OUTBOUND_LIMIT_REACHED));
+    assert!(err.is_quota_error());
+    assert!(!err.is_retryable());
+    let blooio::Error::Api(api) = err else {
+        panic!("expected api error");
+    };
+    assert_eq!(api.error(), Some("rate_limited"));
+    assert_eq!(api.server_message(), Some("slow down"));
+    assert_eq!(api.details().get("limit"), Some(&serde_json::json!(10)));
+    assert_eq!(
+        api.details().get("mode"),
+        Some(&serde_json::json!("organization"))
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -808,7 +907,7 @@ fn phone_numbers_batch_posts_numbers_array() {
 
     let resp = client(&server)
         .phone_numbers()
-        .batch(vec!["+15550001111".to_string(), "+15550002222".to_string()])
+        .batch(["+15550001111", "+15550002222"])
         .unwrap();
     m.assert();
     assert_eq!(resp.results.len(), 2);
