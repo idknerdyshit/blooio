@@ -61,7 +61,7 @@ fn retries_transient_5xx_until_budget_exhausted() {
         .create(CreateContact::new("+15550002222"))
         .unwrap_err();
     // max_retries = 2 → 3 total attempts.
-    m.assert_hits(3);
+    m.assert_calls(3);
     assert_eq!(err.status(), Some(503));
     assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
 }
@@ -95,7 +95,7 @@ fn retries_unknown_429_code_until_budget_exhausted() {
         .contacts()
         .create(CreateContact::new("+15550001111"))
         .unwrap_err();
-    m.assert_hits(2);
+    m.assert_calls(2);
     assert_eq!(err.status(), Some(429));
     assert_eq!(err.code(), Some("temporarily_rate_limited"));
     assert!(err.is_retryable());
@@ -133,7 +133,7 @@ fn does_not_retry_documented_quota_429() {
         .contacts()
         .create(CreateContact::new("+15550001111"))
         .unwrap_err();
-    m.assert_hits(1);
+    m.assert_calls(1);
     assert_eq!(err.status(), Some(429));
     assert_eq!(err.code(), Some(codes::NEW_CONVERSATION_LIMIT_REACHED));
     assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
@@ -168,7 +168,7 @@ fn does_not_retry_when_policy_is_none() {
         .contacts()
         .create(CreateContact::new("+15550003333"))
         .unwrap_err();
-    m.assert_hits(1);
+    m.assert_calls(1);
     assert_eq!(err.status(), Some(503));
 }
 
@@ -305,7 +305,7 @@ fn request_options_base_url_overrides_url_only() {
         )
         .unwrap_err();
     assert_eq!(err.status(), Some(503));
-    override_mock.assert_hits(2);
+    override_mock.assert_calls(2);
     assert_eq!(client.config().base_url, client_server.base_url());
 
     let response = client.account().get().unwrap();
@@ -338,7 +338,7 @@ fn request_options_retry_override_retries_transient_error() {
             ),
         )
         .unwrap_err();
-    m.assert_hits(2);
+    m.assert_calls(2);
     assert_eq!(err.status(), Some(503));
 }
 
@@ -389,7 +389,7 @@ fn generated_idempotency_key_is_sent_across_retries() {
         .create(CreateContact::new("+15550001111"))
         .unwrap_err();
     assert_eq!(err.status(), Some(503));
-    m.assert_hits(2);
+    m.assert_calls(2);
 }
 
 #[test]
@@ -411,7 +411,7 @@ fn request_options_timeout_applies_per_attempt() {
         )
         .unwrap_err();
     assert!(matches!(err, blooio::Error::Transport(_)));
-    assert_eq!(m.hits(), 1);
+    assert_eq!(m.calls(), 1);
 }
 
 #[test]
