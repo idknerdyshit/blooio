@@ -69,12 +69,12 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 wiremock = "0.6"
-httpmock = "0.8"
+httpmock = { version = "0.8", default-features = false }
 tower = { version = "0.5", features = ["util"] }
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
-actix-web = "4"
+actix-web = { version = "4", default-features = false, features = ["macros"] }
 actix-rt = "2"
 
 [[test]]
