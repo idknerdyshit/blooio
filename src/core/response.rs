@@ -29,7 +29,7 @@ pub fn parse_with<T: DeserializeOwned>(
         // `serde_json` can deserialize `()` and `Option<_>` from "null", but
         // not from "", so normalize an empty body to `null`.
         let bytes: &[u8] = if bytes.is_empty() { b"null" } else { bytes };
-        serde_json::from_slice(bytes).map_err(Error::decode)
+        serde_json::from_slice(bytes).map_err(|e| Error::decode_json::<T>(&e))
     } else {
         Err(map_error(status, bytes, retry_after))
     }
@@ -72,6 +72,17 @@ mod tests {
     fn parses_success_body() {
         let t: Thing = parse(200, br#"{"id":"abc"}"#).unwrap();
         assert_eq!(t, Thing { id: "abc".into() });
+    }
+
+    #[test]
+    fn decode_error_includes_safe_json_context() {
+        let err = parse::<Thing>(200, br#"{"id":"sk-secret-123"} trailing"#).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("Thing"));
+        assert!(message.contains("category="));
+        assert!(message.contains("line="));
+        assert!(message.contains("column="));
+        assert!(!message.contains("sk-secret-123"));
     }
 
     #[test]

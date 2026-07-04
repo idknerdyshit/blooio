@@ -4,9 +4,13 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 #[cfg(feature = "tracing")]
 use tracing::Instrument as _;
 
+#[cfg(feature = "sensitive-diagnostics")]
+use crate::client::sensitive::SensitiveAttempt;
 #[cfg(feature = "tracing")]
 use crate::client::trace::{self, OperationTrace};
 use crate::config::ClientConfig;
+#[cfg(feature = "sensitive-diagnostics")]
+use crate::core::diagnostics::SensitiveTransportErrorStage;
 use crate::core::operation::Operation;
 use crate::core::options::RequestOptions;
 use crate::core::ratelimit::ResponseMeta;
@@ -53,7 +57,7 @@ impl Client {
             .timeout(config.timeout)
             .user_agent(config.user_agent.clone())
             .build()
-            .map_err(Error::transport)?;
+            .map_err(Error::reqwest_transport)?;
         Ok(Self::from_config_and_http_client(config, http))
     }
 
@@ -133,7 +137,8 @@ impl Client {
         let max_retries = retry.max_retries;
         let operation_type = std::any::type_name::<O>();
         #[cfg(feature = "tracing")]
-        let operation_trace = OperationTrace::new(operation_type, max_retries);
+        let operation_trace =
+            OperationTrace::new(operation_type, max_retries, options.trace_label.as_deref());
 
         let mut spec = match RequestSpec::build(&op) {
             Ok(spec) => spec,
@@ -205,12 +210,31 @@ impl Client {
         attempt: u32,
         max_retries: u32,
     ) -> Result<RawResponse> {
-        #[cfg(not(feature = "tracing"))]
+        #[cfg(not(any(feature = "tracing", feature = "sensitive-diagnostics")))]
         let _ = (operation_type, attempt, max_retries);
         #[cfg(feature = "tracing")]
-        let span = trace::request_span(&spec.method, operation_type, attempt, max_retries);
+        let attempt_trace = trace::AttemptTrace::new(
+            &spec.method,
+            operation_type,
+            attempt,
+            max_retries,
+            options.trace_label.as_deref(),
+        );
+        #[cfg(feature = "tracing")]
+        let span = trace::request_span(&attempt_trace);
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
+        #[cfg(feature = "sensitive-diagnostics")]
+        let sensitive = SensitiveAttempt::new(crate::client::sensitive::SensitiveAttemptParts {
+            config: &self.config,
+            options,
+            spec,
+            url,
+            auth_header: self.auth_header.expose(),
+            operation: operation_type,
+            attempt,
+            max_retries,
+        });
 
         let mut req = self.http.request(spec.method.clone(), url);
         // The key is exposed only here, to set the header. It is never logged.
@@ -235,19 +259,12 @@ impl Client {
             req = req.timeout(timeout);
         }
 
-        let send = async {
-            match req.send().await {
-                Ok(resp) => {
-                    let status = resp.status().as_u16();
-                    let headers = resp.headers().clone();
-                    match resp.bytes().await {
-                        Ok(bytes) => Ok(RawResponse::new(status, headers, bytes)),
-                        Err(e) => Err(Error::transport(e)),
-                    }
-                }
-                Err(e) => Err(Error::transport(e)),
-            }
-        };
+        let send = Self::execute_request(
+            &self.http,
+            req,
+            #[cfg(feature = "sensitive-diagnostics")]
+            &sensitive,
+        );
         #[cfg(feature = "tracing")]
         let result = send.instrument(span.clone()).await;
         #[cfg(not(feature = "tracing"))]
@@ -256,29 +273,57 @@ impl Client {
         #[cfg(feature = "tracing")]
         match &result {
             Ok(resp) => {
-                trace::attempt_response(
-                    &span,
-                    &spec.method,
-                    operation_type,
-                    attempt,
-                    max_retries,
-                    resp.status,
-                    start.elapsed(),
-                );
+                trace::attempt_response(&span, &attempt_trace, resp.status, start.elapsed());
             }
             Err(e) => {
-                trace::attempt_error(
-                    &span,
-                    &spec.method,
-                    operation_type,
-                    attempt,
-                    max_retries,
-                    start.elapsed(),
-                    e,
-                );
+                trace::attempt_error(&span, &attempt_trace, start.elapsed(), e);
             }
         }
 
         result
+    }
+
+    async fn execute_request(
+        http: &reqwest::Client,
+        req: reqwest::RequestBuilder,
+        #[cfg(feature = "sensitive-diagnostics")] sensitive: &SensitiveAttempt<'_>,
+    ) -> Result<RawResponse> {
+        let req = match req.build() {
+            Ok(req) => req,
+            Err(e) => {
+                #[cfg(feature = "sensitive-diagnostics")]
+                sensitive
+                    .transport_error(SensitiveTransportErrorStage::BuildRequest, e.to_string());
+                return Err(Error::reqwest_transport(e));
+            }
+        };
+
+        #[cfg(feature = "sensitive-diagnostics")]
+        sensitive.request();
+        match http.execute(req).await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let headers = resp.headers().clone();
+                match resp.bytes().await {
+                    Ok(bytes) => {
+                        let raw = RawResponse::new(status, headers, bytes);
+                        #[cfg(feature = "sensitive-diagnostics")]
+                        sensitive.response(&raw);
+                        Ok(raw)
+                    }
+                    Err(e) => {
+                        #[cfg(feature = "sensitive-diagnostics")]
+                        sensitive
+                            .transport_error(SensitiveTransportErrorStage::ReadBody, e.to_string());
+                        Err(Error::reqwest_transport(e))
+                    }
+                }
+            }
+            Err(e) => {
+                #[cfg(feature = "sensitive-diagnostics")]
+                sensitive.transport_error(SensitiveTransportErrorStage::Send, e.to_string());
+                Err(Error::reqwest_transport(e))
+            }
+        }
     }
 }

@@ -21,7 +21,7 @@ use std::time::Duration;
 use blooio::BlockingClient;
 #[cfg(feature = "async")]
 use blooio::Client;
-use blooio::{ClientConfig, RetryPolicy};
+use blooio::{ClientConfig, RequestOptions, RetryPolicy};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
@@ -35,6 +35,7 @@ const SENSITIVE_CHAT_ID: &str = "chat-secret-structured";
 const SENSITIVE_BODY: &str = "structured secret body";
 const SENSITIVE_HEADER_VALUE: &str = "structured-secret-header";
 const SENSITIVE_QUERY_VALUE: &str = "structured-secret-query";
+const SAFE_TRACE_LABEL: &str = "job-42";
 
 #[derive(Clone, Debug)]
 struct CapturedEvent {
@@ -322,6 +323,7 @@ fn assert_success_capture(capture: &TraceCapture, method: &str) {
     attempt.assert_level("DEBUG");
     assert_common_attempt(&attempt, method, "1", "0");
     assert_eq!(attempt.field("status"), "200");
+    assert!(!attempt.fields.contains_key("trace_label"));
 
     let success = capture.one_event("blooio.operation.success");
     success.assert_level("DEBUG");
@@ -335,6 +337,7 @@ fn assert_success_capture(capture: &TraceCapture, method: &str) {
             .starts_with("blooio::resources::")
     );
     success.assert_elapsed();
+    assert!(!success.fields.contains_key("trace_label"));
 
     let spans = capture.spans_named("blooio.request");
     assert_eq!(spans.len(), 1, "{spans:#?}");
@@ -344,6 +347,23 @@ fn assert_success_capture(capture: &TraceCapture, method: &str) {
     assert_eq!(span.field("max_retries"), "0");
     assert_eq!(span.field("status"), "200");
     span.assert_elapsed();
+    assert!(!span.fields.contains_key("trace_label"));
+}
+
+fn assert_trace_label_capture(capture: &TraceCapture, method: &str) {
+    let attempt = capture.one_event("blooio.request.attempt.response");
+    attempt.assert_level("DEBUG");
+    assert_common_attempt(&attempt, method, "1", "0");
+    assert_eq!(attempt.field("trace_label"), SAFE_TRACE_LABEL);
+
+    let success = capture.one_event("blooio.operation.success");
+    success.assert_level("DEBUG");
+    assert_eq!(success.field("method"), method);
+    assert_eq!(success.field("trace_label"), SAFE_TRACE_LABEL);
+
+    let spans = capture.spans_named("blooio.request");
+    assert_eq!(spans.len(), 1, "{spans:#?}");
+    assert_eq!(spans[0].field("trace_label"), SAFE_TRACE_LABEL);
 }
 
 fn assert_api_failure_capture(capture: &TraceCapture) {
@@ -399,6 +419,7 @@ fn assert_transport_failure_capture(capture: &TraceCapture, forbidden_base_url: 
         event.assert_level("WARN");
         assert_common_attempt(event, "POST", &(i + 1).to_string(), "1");
         assert_eq!(event.field("error_kind"), "transport");
+        assert_eq!(event.field("trace_label"), SAFE_TRACE_LABEL);
     }
 
     let retry = capture.one_event("blooio.request.retry");
@@ -408,6 +429,7 @@ fn assert_transport_failure_capture(capture: &TraceCapture, forbidden_base_url: 
     assert_eq!(retry.field("next_attempt"), "2");
     assert!(!retry.fields.contains_key("status"));
     assert!(!retry.fields.contains_key("code"));
+    assert_eq!(retry.field("trace_label"), SAFE_TRACE_LABEL);
 
     let failure = capture.one_event("blooio.operation.failure");
     failure.assert_level("WARN");
@@ -417,7 +439,14 @@ fn assert_transport_failure_capture(capture: &TraceCapture, forbidden_base_url: 
     assert_eq!(failure.field("error_kind"), "transport");
     assert!(!failure.fields.contains_key("status"));
     assert!(!failure.fields.contains_key("code"));
+    assert_eq!(failure.field("trace_label"), SAFE_TRACE_LABEL);
     failure.assert_elapsed();
+
+    let spans = capture.spans_named("blooio.request");
+    assert_eq!(spans.len(), 2, "{spans:#?}");
+    for span in spans {
+        assert_eq!(span.field("trace_label"), SAFE_TRACE_LABEL);
+    }
 
     assert_redacted(capture, &[forbidden_base_url]);
 }
@@ -471,6 +500,43 @@ fn blocking_success_emits_attempt_and_operation_success() {
     let _me = client.account().get().unwrap();
 
     assert_success_capture(&capture, "GET");
+    assert_redacted(&capture, &[base_url.as_str()]);
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn async_trace_label_is_emitted_when_set() {
+    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (capture, _guard) = capture_traces();
+
+    let client = Client::from_config(no_retry_config(base_url.clone())).unwrap();
+    let _me = client
+        .send_with_options(
+            blooio::resources::account::GetMe,
+            RequestOptions::new().trace_label(SAFE_TRACE_LABEL),
+        )
+        .await
+        .unwrap();
+
+    assert_trace_label_capture(&capture, "GET");
+    assert_redacted(&capture, &[base_url.as_str()]);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn blocking_trace_label_is_emitted_when_set() {
+    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (capture, _guard) = capture_traces();
+
+    let client = BlockingClient::from_config(no_retry_config(base_url.clone())).unwrap();
+    let _me = client
+        .send_with_options(
+            blooio::resources::account::GetMe,
+            RequestOptions::new().trace_label(SAFE_TRACE_LABEL),
+        )
+        .unwrap();
+
+    assert_trace_label_capture(&capture, "GET");
     assert_redacted(&capture, &[base_url.as_str()]);
 }
 
@@ -559,6 +625,7 @@ async fn async_transport_failure_is_redacted_and_structured() {
         .send_with_options(
             blooio::resources::chats::SendMessage::new(SENSITIVE_CHAT_ID).text(SENSITIVE_BODY),
             blooio::RequestOptions::new()
+                .trace_label(SAFE_TRACE_LABEL)
                 .header("x-sensitive", SENSITIVE_HEADER_VALUE)
                 .query("token", SENSITIVE_QUERY_VALUE),
         )
@@ -579,6 +646,7 @@ fn blocking_transport_failure_is_redacted_and_structured() {
         .send_with_options(
             blooio::resources::chats::SendMessage::new(SENSITIVE_CHAT_ID).text(SENSITIVE_BODY),
             blooio::RequestOptions::new()
+                .trace_label(SAFE_TRACE_LABEL)
                 .header("x-sensitive", SENSITIVE_HEADER_VALUE)
                 .query("token", SENSITIVE_QUERY_VALUE),
         )

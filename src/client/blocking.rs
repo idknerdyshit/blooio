@@ -2,9 +2,13 @@
 
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 
+#[cfg(feature = "sensitive-diagnostics")]
+use crate::client::sensitive::{SensitiveAttempt, SensitiveAttemptParts};
 #[cfg(feature = "tracing")]
 use crate::client::trace::{self, OperationTrace};
 use crate::config::ClientConfig;
+#[cfg(feature = "sensitive-diagnostics")]
+use crate::core::diagnostics::SensitiveTransportErrorStage;
 use crate::core::operation::Operation;
 use crate::core::options::RequestOptions;
 use crate::core::ratelimit::ResponseMeta;
@@ -145,7 +149,8 @@ impl BlockingClient {
         let max_retries = retry.max_retries;
         let operation_type = std::any::type_name::<O>();
         #[cfg(feature = "tracing")]
-        let operation_trace = OperationTrace::new(operation_type, max_retries);
+        let operation_trace =
+            OperationTrace::new(operation_type, max_retries, options.trace_label.as_deref());
 
         let mut spec = match RequestSpec::build(&op) {
             Ok(spec) => spec,
@@ -214,94 +219,149 @@ impl BlockingClient {
         attempt: u32,
         max_retries: u32,
     ) -> Result<RawResponse> {
-        #[cfg(not(feature = "tracing"))]
+        #[cfg(not(any(feature = "tracing", feature = "sensitive-diagnostics")))]
         let _ = (operation_type, attempt, max_retries);
         #[cfg(feature = "tracing")]
-        let span = trace::request_span(&spec.method, operation_type, attempt, max_retries);
+        let attempt_trace = trace::AttemptTrace::new(
+            &spec.method,
+            operation_type,
+            attempt,
+            max_retries,
+            options.trace_label.as_deref(),
+        );
+        #[cfg(feature = "tracing")]
+        let span = trace::request_span(&attempt_trace);
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
+        #[cfg(feature = "sensitive-diagnostics")]
+        let sensitive = SensitiveAttempt::new(SensitiveAttemptParts {
+            config: &self.config,
+            options,
+            spec,
+            url,
+            auth_header: self.auth_header.expose(),
+            operation: operation_type,
+            attempt,
+            max_retries,
+        });
 
         #[cfg(feature = "tracing")]
         let _enter = span.enter();
-        let raw = {
-            let mut builder = http::Request::builder()
-                .method(spec.method.clone())
-                .uri(url);
-            // Key exposed only to set the header; never logged. The User-Agent is
-            // configured on the agent at build time, not per-request.
-            builder = builder.header(AUTHORIZATION, self.auth_header.expose().as_str());
-            for (k, v) in &spec.headers {
-                if k.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
-                    continue;
-                }
-                builder = builder.header(k.as_str(), v.as_str());
+        let mut builder = http::Request::builder()
+            .method(spec.method.clone())
+            .uri(url);
+        // Key exposed only to set the header; never logged. The User-Agent is
+        // configured on the agent at build time, not per-request.
+        builder = builder.header(AUTHORIZATION, self.auth_header.expose().as_str());
+        for (k, v) in &spec.headers {
+            if k.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
+                continue;
             }
+            builder = builder.header(k.as_str(), v.as_str());
+        }
 
-            let response = if let Some(body) = &spec.body {
-                if !spec
-                    .headers
-                    .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
-                {
-                    builder = builder.header(CONTENT_TYPE, "application/json");
-                }
-                match builder.body(body.as_ref()) {
-                    Ok(request) => self.run_request(request, options),
-                    Err(e) => Err(Error::transport(e)),
-                }
-            } else {
-                match builder.body(()) {
-                    Ok(request) => self.run_request(request, options),
-                    Err(e) => Err(Error::transport(e)),
-                }
-            };
-
-            match response {
-                Ok(mut resp) => {
-                    let status = resp.status().as_u16();
-                    let headers = resp.headers().clone();
-                    match resp.body_mut().read_to_vec() {
-                        Ok(bytes) => Ok(RawResponse::new(status, headers, bytes.into())),
-                        Err(e) => Err(Error::transport(e)),
-                    }
-                }
-                Err(e) => Err(e),
+        let response = if let Some(body) = &spec.body {
+            if !spec
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
+            {
+                builder = builder.header(CONTENT_TYPE, "application/json");
             }
+            self.run_built_request(
+                builder.body(body.as_ref()),
+                options,
+                #[cfg(feature = "sensitive-diagnostics")]
+                &sensitive,
+            )
+        } else {
+            self.run_built_request(
+                builder.body(()),
+                options,
+                #[cfg(feature = "sensitive-diagnostics")]
+                &sensitive,
+            )
         };
+        let raw = response.and_then(|resp| {
+            Self::read_raw_response(
+                resp,
+                #[cfg(feature = "sensitive-diagnostics")]
+                &sensitive,
+            )
+        });
         #[cfg(feature = "tracing")]
         match &raw {
             Ok(resp) => {
-                trace::attempt_response(
-                    &span,
-                    &spec.method,
-                    operation_type,
-                    attempt,
-                    max_retries,
-                    resp.status,
-                    start.elapsed(),
-                );
+                trace::attempt_response(&span, &attempt_trace, resp.status, start.elapsed());
             }
             Err(e) => {
-                trace::attempt_error(
-                    &span,
-                    &spec.method,
-                    operation_type,
-                    attempt,
-                    max_retries,
-                    start.elapsed(),
-                    e,
-                );
+                trace::attempt_error(&span, &attempt_trace, start.elapsed(), e);
             }
         }
 
         raw
     }
 
+    fn run_built_request<S: ureq::AsSendBody>(
+        &self,
+        request: std::result::Result<http::Request<S>, http::Error>,
+        options: &RequestOptions,
+        #[cfg(feature = "sensitive-diagnostics")] sensitive: &SensitiveAttempt<'_>,
+    ) -> Result<http::Response<ureq::Body>> {
+        let request = match request {
+            Ok(request) => request,
+            Err(e) => {
+                let raw_error = e.to_string();
+                #[cfg(feature = "sensitive-diagnostics")]
+                sensitive.transport_error(
+                    SensitiveTransportErrorStage::BuildRequest,
+                    raw_error.clone(),
+                );
+                return Err(Error::transport(&raw_error));
+            }
+        };
+
+        #[cfg(feature = "sensitive-diagnostics")]
+        sensitive.request();
+        match self.run_request(request, options) {
+            Ok(response) => Ok(response),
+            Err(e) => {
+                let raw_error = e.to_string();
+                #[cfg(feature = "sensitive-diagnostics")]
+                sensitive.transport_error(SensitiveTransportErrorStage::Send, raw_error.clone());
+                Err(Error::transport(&raw_error))
+            }
+        }
+    }
+
+    fn read_raw_response(
+        mut resp: http::Response<ureq::Body>,
+        #[cfg(feature = "sensitive-diagnostics")] sensitive: &SensitiveAttempt<'_>,
+    ) -> Result<RawResponse> {
+        let status = resp.status().as_u16();
+        let headers = resp.headers().clone();
+        match resp.body_mut().read_to_vec() {
+            Ok(bytes) => {
+                let raw = RawResponse::new(status, headers, bytes.into());
+                #[cfg(feature = "sensitive-diagnostics")]
+                sensitive.response(&raw);
+                Ok(raw)
+            }
+            Err(e) => {
+                let raw_error = e.to_string();
+                #[cfg(feature = "sensitive-diagnostics")]
+                sensitive
+                    .transport_error(SensitiveTransportErrorStage::ReadBody, raw_error.clone());
+                Err(Error::transport(&raw_error))
+            }
+        }
+    }
+
     fn run_request<S: ureq::AsSendBody>(
         &self,
         request: http::Request<S>,
         options: &RequestOptions,
-    ) -> Result<http::Response<ureq::Body>> {
+    ) -> std::result::Result<http::Response<ureq::Body>, ureq::Error> {
         let request = if let Some(timeout) = options.timeout {
             self.agent
                 .configure_request(request)
@@ -310,6 +370,6 @@ impl BlockingClient {
         } else {
             request
         };
-        self.agent.run(request).map_err(Error::transport)
+        self.agent.run(request)
     }
 }

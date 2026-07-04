@@ -4,6 +4,8 @@
 mod asynchronous;
 #[cfg(feature = "sync")]
 mod blocking;
+#[cfg(feature = "sensitive-diagnostics")]
+mod sensitive;
 #[cfg(feature = "tracing")]
 mod trace;
 

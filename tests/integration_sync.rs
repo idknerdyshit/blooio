@@ -422,14 +422,14 @@ fn send_with_response_returns_decoded_output_and_raw_data() {
         then.status(200)
             .header("x-ratelimit-remaining", "9")
             .header("x-secret", "server-secret")
-            .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
+            .json_body(serde_json::json!({ "valid": true, "user_id": "user-secret-u1" }));
     });
 
     let response = client(&server)
         .send_with_response(blooio::resources::account::GetMe)
         .unwrap();
     m.assert();
-    assert_eq!(response.output.user_id.as_deref(), Some("u1"));
+    assert_eq!(response.output.user_id.as_deref(), Some("user-secret-u1"));
     assert_eq!(response.meta.status, 200);
     assert_eq!(response.meta.rate_limit.unwrap().remaining, Some(9));
     assert_eq!(response.raw.status, 200);
@@ -438,6 +438,7 @@ fn send_with_response_returns_decoded_output_and_raw_data() {
 
     let dbg = format!("{response:?}");
     assert!(!dbg.contains("server-secret"));
+    assert!(!dbg.contains("user-secret-u1"));
     assert!(dbg.contains("REDACTED"));
 }
 
@@ -552,6 +553,12 @@ fn malformed_body_maps_to_decode_error() {
 
     let err = client(&server).account().get().unwrap_err();
     assert!(matches!(err, blooio::Error::Decode(_)));
+    let message = err.to_string();
+    assert!(message.contains("MeResponse"));
+    assert!(message.contains("category="));
+    assert!(message.contains("line="));
+    assert!(message.contains("column="));
+    assert!(!message.contains("not json"));
     assert_eq!(err.code(), None);
     assert_eq!(err.status(), None);
 }
@@ -567,6 +574,7 @@ fn connection_refused_maps_to_transport_error() {
 
     let err = client.account().get().unwrap_err();
     assert!(matches!(err, blooio::Error::Transport(_)));
+    assert!(!err.to_string().contains("127.0.0.1:1"));
     assert_eq!(err.code(), None);
     assert_eq!(err.status(), None);
 }

@@ -11,27 +11,26 @@ pub(crate) const TARGET: &str = "blooio::trace";
 pub(crate) struct OperationTrace {
     operation: &'static str,
     max_retries: u32,
+    trace_label: Option<String>,
     start: Instant,
 }
 
 impl OperationTrace {
-    pub(crate) fn new(operation: &'static str, max_retries: u32) -> Self {
+    pub(crate) fn new(
+        operation: &'static str,
+        max_retries: u32,
+        trace_label: Option<&str>,
+    ) -> Self {
         Self {
             operation,
             max_retries,
+            trace_label: trace_label.map(ToOwned::to_owned),
             start: Instant::now(),
         }
     }
 
     pub(crate) fn success(&self, method: &Method, attempts: u32, status: u16) {
-        operation_success(
-            method,
-            self.operation,
-            attempts,
-            self.max_retries,
-            status,
-            self.start.elapsed(),
-        );
+        operation_success(self, method, attempts, status, self.start.elapsed());
     }
 
     pub(crate) fn failure(
@@ -41,15 +40,7 @@ impl OperationTrace {
         status: Option<u16>,
         error: &Error,
     ) {
-        operation_failure(
-            method,
-            self.operation,
-            attempts,
-            self.max_retries,
-            self.start.elapsed(),
-            status,
-            error,
-        );
+        operation_failure(self, method, attempts, self.start.elapsed(), status, error);
     }
 
     pub(crate) fn retry(
@@ -60,55 +51,99 @@ impl OperationTrace {
         delay: Duration,
         error: &Error,
     ) {
-        retry(
-            method,
-            self.operation,
-            attempt,
-            next_attempt,
-            self.max_retries,
-            delay,
-            error,
-        );
+        retry(self, method, attempt, next_attempt, delay, error);
     }
 }
 
-pub(crate) fn request_span(
-    method: &Method,
+pub(crate) struct AttemptTrace<'a> {
+    method: &'a Method,
     operation: &'static str,
     attempt: u32,
     max_retries: u32,
-) -> tracing::Span {
-    tracing::info_span!(
-        target: TARGET,
-        "blooio.request",
-        method = method.as_str(),
-        operation = operation,
-        attempt,
-        max_retries,
-        status = tracing::field::Empty,
-        elapsed_ms = tracing::field::Empty,
-    )
+    trace_label: Option<&'a str>,
+}
+
+impl<'a> AttemptTrace<'a> {
+    pub(crate) fn new(
+        method: &'a Method,
+        operation: &'static str,
+        attempt: u32,
+        max_retries: u32,
+        trace_label: Option<&'a str>,
+    ) -> Self {
+        Self {
+            method,
+            operation,
+            attempt,
+            max_retries,
+            trace_label,
+        }
+    }
+}
+
+macro_rules! trace_debug {
+    ($trace_label:expr, $($field:tt)*) => {
+        if let Some(trace_label) = $trace_label {
+            tracing::debug!(target: TARGET, trace_label, $($field)*);
+        } else {
+            tracing::debug!(target: TARGET, $($field)*);
+        }
+    };
+}
+
+macro_rules! trace_warn {
+    ($trace_label:expr, $($field:tt)*) => {
+        if let Some(trace_label) = $trace_label {
+            tracing::warn!(target: TARGET, trace_label, $($field)*);
+        } else {
+            tracing::warn!(target: TARGET, $($field)*);
+        }
+    };
+}
+
+pub(crate) fn request_span(trace: &AttemptTrace<'_>) -> tracing::Span {
+    if let Some(trace_label) = trace.trace_label {
+        tracing::info_span!(
+            target: TARGET,
+            "blooio.request",
+            method = trace.method.as_str(),
+            operation = trace.operation,
+            attempt = trace.attempt,
+            max_retries = trace.max_retries,
+            trace_label,
+            status = tracing::field::Empty,
+            elapsed_ms = tracing::field::Empty,
+        )
+    } else {
+        tracing::info_span!(
+            target: TARGET,
+            "blooio.request",
+            method = trace.method.as_str(),
+            operation = trace.operation,
+            attempt = trace.attempt,
+            max_retries = trace.max_retries,
+            status = tracing::field::Empty,
+            elapsed_ms = tracing::field::Empty,
+        )
+    }
 }
 
 pub(crate) fn attempt_response(
     span: &tracing::Span,
-    method: &Method,
-    operation: &'static str,
-    attempt: u32,
-    max_retries: u32,
+    trace: &AttemptTrace<'_>,
     status: u16,
     elapsed: Duration,
 ) {
     let elapsed_ms = duration_ms(elapsed);
     span.record("status", status);
     span.record("elapsed_ms", elapsed_ms);
-    tracing::debug!(
-        target: TARGET,
+    trace_debug!(
+        trace.trace_label,
         event = "blooio.request.attempt.response",
-        method = method.as_str(),
-        operation = operation,
-        attempt,
-        max_retries,
+        method = trace.method.as_str(),
+        operation = trace.operation,
+        attempt = trace.attempt,
+        max_retries = trace.max_retries,
         status,
         elapsed_ms,
     );
@@ -116,33 +151,29 @@ pub(crate) fn attempt_response(
 
 pub(crate) fn attempt_error(
     span: &tracing::Span,
-    method: &Method,
-    operation: &'static str,
-    attempt: u32,
-    max_retries: u32,
+    trace: &AttemptTrace<'_>,
     elapsed: Duration,
     error: &Error,
 ) {
     let elapsed_ms = duration_ms(elapsed);
     span.record("elapsed_ms", elapsed_ms);
-    tracing::warn!(
-        target: TARGET,
+    trace_warn!(
+        trace.trace_label,
         event = "blooio.request.attempt.error",
-        method = method.as_str(),
-        operation = operation,
-        attempt,
-        max_retries,
+        method = trace.method.as_str(),
+        operation = trace.operation,
+        attempt = trace.attempt,
+        max_retries = trace.max_retries,
         elapsed_ms,
         error_kind = error_kind(error),
     );
 }
 
-pub(crate) fn retry(
+fn retry(
+    trace: &OperationTrace,
     method: &Method,
-    operation: &'static str,
     attempt: u32,
     next_attempt: u32,
-    max_retries: u32,
     delay: Duration,
     error: &Error,
 ) {
@@ -158,14 +189,14 @@ pub(crate) fn retry(
     let retry_after_ms = error.retry_after().map(duration_ms);
 
     match (status, code, retry_after_ms) {
-        (Some(status), Some(code), Some(retry_after_ms)) => tracing::warn!(
-            target: TARGET,
+        (Some(status), Some(code), Some(retry_after_ms)) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempt,
             next_attempt,
-            max_retries,
+            max_retries = trace.max_retries,
             delay_ms,
             delay_source,
             error_kind,
@@ -173,55 +204,55 @@ pub(crate) fn retry(
             code,
             retry_after_ms,
         ),
-        (Some(status), Some(code), None) => tracing::warn!(
-            target: TARGET,
+        (Some(status), Some(code), None) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempt,
             next_attempt,
-            max_retries,
+            max_retries = trace.max_retries,
             delay_ms,
             delay_source,
             error_kind,
             status,
             code,
         ),
-        (Some(status), None, Some(retry_after_ms)) => tracing::warn!(
-            target: TARGET,
+        (Some(status), None, Some(retry_after_ms)) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempt,
             next_attempt,
-            max_retries,
+            max_retries = trace.max_retries,
             delay_ms,
             delay_source,
             error_kind,
             status,
             retry_after_ms,
         ),
-        (Some(status), None, None) => tracing::warn!(
-            target: TARGET,
+        (Some(status), None, None) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempt,
             next_attempt,
-            max_retries,
+            max_retries = trace.max_retries,
             delay_ms,
             delay_source,
             error_kind,
             status,
         ),
-        (None, _, _) => tracing::warn!(
-            target: TARGET,
+        (None, _, _) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempt,
             next_attempt,
-            max_retries,
+            max_retries = trace.max_retries,
             delay_ms,
             delay_source,
             error_kind,
@@ -229,31 +260,29 @@ pub(crate) fn retry(
     }
 }
 
-pub(crate) fn operation_success(
+fn operation_success(
+    trace: &OperationTrace,
     method: &Method,
-    operation: &'static str,
     attempts: u32,
-    max_retries: u32,
     status: u16,
     elapsed: Duration,
 ) {
-    tracing::debug!(
-        target: TARGET,
+    trace_debug!(
+        trace.trace_label.as_deref(),
         event = "blooio.operation.success",
         method = method.as_str(),
-        operation = operation,
+        operation = trace.operation,
         attempts,
-        max_retries,
+        max_retries = trace.max_retries,
         status,
         elapsed_ms = duration_ms(elapsed),
     );
 }
 
-pub(crate) fn operation_failure(
+fn operation_failure(
+    trace: &OperationTrace,
     method: &Method,
-    operation: &'static str,
     attempts: u32,
-    max_retries: u32,
     elapsed: Duration,
     status: Option<u16>,
     error: &Error,
@@ -264,36 +293,36 @@ pub(crate) fn operation_failure(
     let code = error.code();
 
     match (status, code) {
-        (Some(status), Some(code)) => tracing::warn!(
-            target: TARGET,
+        (Some(status), Some(code)) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.operation.failure",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempts,
-            max_retries,
+            max_retries = trace.max_retries,
             elapsed_ms,
             error_kind,
             status,
             code,
         ),
-        (Some(status), None) => tracing::warn!(
-            target: TARGET,
+        (Some(status), None) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.operation.failure",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempts,
-            max_retries,
+            max_retries = trace.max_retries,
             elapsed_ms,
             error_kind,
             status,
         ),
-        (None, _) => tracing::warn!(
-            target: TARGET,
+        (None, _) => trace_warn!(
+            trace.trace_label.as_deref(),
             event = "blooio.operation.failure",
             method = method.as_str(),
-            operation = operation,
+            operation = trace.operation,
             attempts,
-            max_retries,
+            max_retries = trace.max_retries,
             elapsed_ms,
             error_kind,
         ),

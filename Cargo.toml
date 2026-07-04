@@ -35,6 +35,8 @@ axum = ["webhooks", "dep:axum", "dep:futures-util"]
 actix = ["webhooks", "dep:actix-web", "dep:futures-util"]
 # Structured tracing instrumentation on the executors (secret-redacted).
 tracing = ["dep:tracing"]
+# Explicit opt-in hooks for local/protocol debugging with raw request/response data.
+sensitive-diagnostics = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

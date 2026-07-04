@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+#[cfg(feature = "sensitive-diagnostics")]
+use crate::core::diagnostics::SensitiveDiagnostics;
 use crate::core::retry::RetryPolicy;
 use crate::error::{Error, Result};
 use crate::secret::Secret;
@@ -27,6 +29,14 @@ pub struct ClientConfig {
     /// How transient failures are retried. Defaults to [`RetryPolicy::default`]
     /// (up to two retries with jittered exponential backoff).
     pub retry: RetryPolicy,
+    /// Explicitly sensitive request/response diagnostics sink.
+    ///
+    /// This field exists only with the `sensitive-diagnostics` feature. When
+    /// set, it receives raw request/response material for every request made by
+    /// clients built from this config, unless a request-level diagnostics
+    /// override is supplied. The sink itself is redacted from [`Debug`].
+    #[cfg(feature = "sensitive-diagnostics")]
+    pub sensitive_diagnostics: Option<SensitiveDiagnostics>,
 }
 
 impl ClientConfig {
@@ -38,6 +48,8 @@ impl ClientConfig {
             timeout: Duration::from_secs(30),
             user_agent: concat!("blooio-rs/", env!("CARGO_PKG_VERSION")).to_owned(),
             retry: RetryPolicy::default(),
+            #[cfg(feature = "sensitive-diagnostics")]
+            sensitive_diagnostics: None,
         }
     }
 
@@ -91,6 +103,27 @@ impl ClientConfig {
     #[must_use]
     pub fn with_retry(mut self, retry: RetryPolicy) -> Self {
         self.retry = retry;
+        self
+    }
+
+    /// Attach a client-wide sensitive diagnostics sink.
+    ///
+    /// This is available only with the `sensitive-diagnostics` feature and can
+    /// expose API keys, URLs, headers, request bodies, response bodies, and raw
+    /// transport errors to the supplied sink. It is intended for local/protocol
+    /// debugging, not production logging.
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[must_use]
+    pub fn with_sensitive_diagnostics(mut self, diagnostics: SensitiveDiagnostics) -> Self {
+        self.sensitive_diagnostics = Some(diagnostics);
+        self
+    }
+
+    /// Remove any client-wide sensitive diagnostics sink.
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[must_use]
+    pub fn without_sensitive_diagnostics(mut self) -> Self {
+        self.sensitive_diagnostics = None;
         self
     }
 
@@ -181,6 +214,19 @@ mod tests {
             cfg.url_for("/chats/c1/messages"),
             "https://example.com/api/chats/c1/messages"
         );
+    }
+
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[test]
+    fn sensitive_diagnostics_can_be_set_and_cleared() {
+        let cfg = ClientConfig::new("k").with_sensitive_diagnostics(SensitiveDiagnostics::noop());
+        assert!(cfg.sensitive_diagnostics.is_some());
+        let dbg = format!("{cfg:?}");
+        assert!(dbg.contains("sensitive_diagnostics"));
+        assert!(dbg.contains("REDACTED"));
+
+        let cfg = cfg.without_sensitive_diagnostics();
+        assert!(cfg.sensitive_diagnostics.is_none());
     }
 
     #[test]

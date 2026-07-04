@@ -6,6 +6,8 @@ use std::time::Duration;
 use http::header::{HeaderName, HeaderValue};
 
 use crate::config::{ClientConfig, normalize_base_url, validate_base_url};
+#[cfg(feature = "sensitive-diagnostics")]
+use crate::core::diagnostics::SensitiveDiagnostics;
 use crate::core::retry::RetryPolicy;
 use crate::error::{Error, Result};
 
@@ -22,6 +24,9 @@ pub struct RequestOptions {
     pub(crate) retry: Option<RetryPolicy>,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) query: Vec<(String, String)>,
+    pub(crate) trace_label: Option<String>,
+    #[cfg(feature = "sensitive-diagnostics")]
+    pub(crate) sensitive_diagnostics: Option<SensitiveDiagnostics>,
 }
 
 impl RequestOptions {
@@ -111,6 +116,33 @@ impl RequestOptions {
         self
     }
 
+    /// Attach a caller-provided safe correlation label to Blooio tracing events.
+    ///
+    /// The label is emitted only by this crate's structured tracing
+    /// instrumentation. It is not sent over the wire and is redacted from
+    /// [`Debug`](fmt::Debug). Pass an empty string to clear a previously set
+    /// label. Only put values here that are already safe for your logs; the
+    /// crate does not derive or sanitize labels from request data.
+    #[must_use]
+    pub fn trace_label(mut self, label: impl Into<String>) -> Self {
+        let label = label.into();
+        self.trace_label = if label.is_empty() { None } else { Some(label) };
+        self
+    }
+
+    /// Override the client-wide sensitive diagnostics sink for this request.
+    ///
+    /// This is available only with the `sensitive-diagnostics` feature and can
+    /// expose API keys, URLs, headers, request bodies, response bodies, and raw
+    /// transport errors to the supplied sink. Use [`SensitiveDiagnostics::noop`]
+    /// to disable a client-wide diagnostics sink for one request.
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[must_use]
+    pub fn sensitive_diagnostics(mut self, diagnostics: SensitiveDiagnostics) -> Self {
+        self.sensitive_diagnostics = Some(diagnostics);
+        self
+    }
+
     pub(crate) fn retry_or(&self, fallback: RetryPolicy) -> RetryPolicy {
         self.retry.unwrap_or(fallback)
     }
@@ -126,7 +158,8 @@ impl RequestOptions {
 
 impl fmt::Debug for RequestOptions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RequestOptions")
+        let mut debug = f.debug_struct("RequestOptions");
+        debug
             .field(
                 "base_url",
                 &format_args!(
@@ -145,7 +178,30 @@ impl fmt::Debug for RequestOptions {
                 &format_args!("[REDACTED; {}]", self.headers.len()),
             )
             .field("query", &format_args!("[REDACTED; {}]", self.query.len()))
-            .finish()
+            .field(
+                "trace_label",
+                &format_args!(
+                    "{}",
+                    if self.trace_label.is_some() {
+                        "Some([REDACTED])"
+                    } else {
+                        "None"
+                    }
+                ),
+            );
+        #[cfg(feature = "sensitive-diagnostics")]
+        debug.field(
+            "sensitive_diagnostics",
+            &format_args!(
+                "{}",
+                if self.sensitive_diagnostics.is_some() {
+                    "Some([REDACTED])"
+                } else {
+                    "None"
+                }
+            ),
+        );
+        debug.finish()
     }
 }
 
@@ -190,10 +246,24 @@ mod tests {
         let options = RequestOptions::new()
             .base_url("https://secret.example/v2/api")
             .header("x-api-key", "secret")
-            .query("token", "also-secret");
+            .query("token", "also-secret")
+            .trace_label("safe-but-redacted-label");
+        #[cfg(feature = "sensitive-diagnostics")]
+        let options = options.sensitive_diagnostics(SensitiveDiagnostics::noop());
         let dbg = format!("{options:?}");
         assert!(!dbg.contains("secret"));
         assert!(!dbg.contains("secret.example"));
+        assert!(!dbg.contains("safe-but-redacted-label"));
+        #[cfg(feature = "sensitive-diagnostics")]
+        assert!(dbg.contains("sensitive_diagnostics: Some([REDACTED])"));
         assert!(dbg.contains("REDACTED"));
+    }
+
+    #[test]
+    fn trace_label_empty_string_clears_label() {
+        let options = RequestOptions::new()
+            .trace_label("request-1")
+            .trace_label("");
+        assert_eq!(options.trace_label, None);
     }
 }

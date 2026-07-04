@@ -397,7 +397,7 @@ async fn send_with_response_returns_decoded_output_and_raw_data() {
             ResponseTemplate::new(200)
                 .insert_header("x-ratelimit-remaining", "9")
                 .insert_header("x-secret", "server-secret")
-                .set_body_json(serde_json::json!({ "valid": true, "user_id": "u1" })),
+                .set_body_json(serde_json::json!({ "valid": true, "user_id": "user-secret-u1" })),
         )
         .expect(1)
         .mount(&server)
@@ -408,7 +408,7 @@ async fn send_with_response_returns_decoded_output_and_raw_data() {
         .send_with_response(blooio::resources::account::GetMe)
         .await
         .unwrap();
-    assert_eq!(response.output.user_id.as_deref(), Some("u1"));
+    assert_eq!(response.output.user_id.as_deref(), Some("user-secret-u1"));
     assert_eq!(response.meta.status, 200);
     assert_eq!(response.meta.rate_limit.unwrap().remaining, Some(9));
     assert_eq!(response.raw.status, 200);
@@ -417,6 +417,7 @@ async fn send_with_response_returns_decoded_output_and_raw_data() {
 
     let dbg = format!("{response:?}");
     assert!(!dbg.contains("server-secret"));
+    assert!(!dbg.contains("user-secret-u1"));
     assert!(dbg.contains("REDACTED"));
 }
 
@@ -546,6 +547,12 @@ async fn malformed_body_maps_to_decode_error() {
 
     let err = client(&server).await.account().get().await.unwrap_err();
     assert!(matches!(err, blooio::Error::Decode(_)));
+    let message = err.to_string();
+    assert!(message.contains("MeResponse"));
+    assert!(message.contains("category="));
+    assert!(message.contains("line="));
+    assert!(message.contains("column="));
+    assert!(!message.contains("not json"));
     // Decode is not an API error: the machine-readable accessors return None.
     assert_eq!(err.code(), None);
     assert_eq!(err.status(), None);
@@ -563,6 +570,7 @@ async fn connection_refused_maps_to_transport_error() {
 
     let err = client.account().get().await.unwrap_err();
     assert!(matches!(err, blooio::Error::Transport(_)));
+    assert!(!err.to_string().contains("127.0.0.1:1"));
     assert_eq!(err.code(), None);
     assert_eq!(err.status(), None);
 }

@@ -49,6 +49,9 @@
 //! - `axum` / `actix` — webhook extractors for those frameworks (each implies
 //!   `webhooks`).
 //! - `tracing` *(default)* — secret-redacted request instrumentation.
+//! - `sensitive-diagnostics` — explicit raw request/response inspection hooks
+//!   for local debugging. This feature is dangerous by design and is not enabled
+//!   by default.
 //!
 //! At least one of `async` / `sync` / `webhooks` must be enabled. A
 //! webhooks-only build does not compile either HTTP client executor.
@@ -69,8 +72,9 @@
 //! Request-scoped transport controls are available through [`RequestOptions`]
 //! and `send_with_options`. They can override retry policy, set a per-attempt
 //! timeout, override the base URL, append query parameters, and add extra
-//! headers. `Authorization` is still injected by the executor from the redacted
-//! client secret.
+//! headers. They can also attach a caller-provided safe trace label for
+//! correlation in this crate's structured tracing. `Authorization` is still
+//! injected by the executor from the redacted client secret.
 //!
 //! Use `send_with_response` when you need [`ApiResponse`], which combines the
 //! decoded output, [`ResponseMeta`], and a [`RawResponse`] containing status,
@@ -107,6 +111,15 @@ pub use config::{ClientConfig, DEFAULT_BASE_URL};
 pub use core::{
     ApiResponse, Listing, Operation, Page, Pagination, Paginator, RateLimit, RawResponse,
     RequestOptions, ResponseMeta, RetryPolicy,
+};
+#[cfg(all(
+    feature = "sensitive-diagnostics",
+    any(feature = "async", feature = "sync")
+))]
+pub use core::{
+    SensitiveDiagnosticEvent, SensitiveDiagnosticSink, SensitiveDiagnostics,
+    SensitiveDiagnosticsBuilder, SensitiveRequestSnapshot, SensitiveResponseSnapshot,
+    SensitiveTransportErrorSnapshot, SensitiveTransportErrorStage,
 };
 pub use error::{ApiError, ApiErrorDetails, Error, Result};
 pub use secret::Secret;

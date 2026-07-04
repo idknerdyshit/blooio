@@ -10,16 +10,17 @@ from a single sans-IO core. Sync users pull no async runtime.
 
 ## Features
 
-| Feature      | Default | Description                                               |
-| ------------ | :-----: | --------------------------------------------------------- |
-| `async`      |   ✅    | The async [`Client`] executor (reqwest).                  |
-| `sync`       |         | The blocking `BlockingClient` executor (ureq), no tokio.  |
-| `rustls`     |   ✅    | TLS via rustls.                                           |
-| `native-tls` |         | TLS via the system's native stack.                        |
-| `webhooks`   |   ✅    | Typed webhook payloads + HMAC signature verification, usable without HTTP clients. |
-| `axum`       |         | Verified axum webhook extractor; implies `webhooks`.      |
-| `actix`      |         | Verified actix-web webhook extractor; implies `webhooks`. |
-| `tracing`    |   ✅    | Secret-redacted request instrumentation.                  |
+| Feature                   | Default | Description                                               |
+| ------------------------- | :-----: | --------------------------------------------------------- |
+| `async`                   |   ✅    | The async [`Client`] executor (reqwest).                  |
+| `sync`                    |         | The blocking `BlockingClient` executor (ureq), no tokio.  |
+| `rustls`                  |   ✅    | TLS via rustls.                                           |
+| `native-tls`              |         | TLS via the system's native stack.                        |
+| `webhooks`                |   ✅    | Typed webhook payloads + HMAC signature verification, usable without HTTP clients. |
+| `axum`                    |         | Verified axum webhook extractor; implies `webhooks`.      |
+| `actix`                   |         | Verified actix-web webhook extractor; implies `webhooks`. |
+| `tracing`                 |   ✅    | Secret-redacted request instrumentation.                  |
+| `sensitive-diagnostics`   |         | Explicit raw request/response inspection hooks for local debugging. |
 
 At least one of `async` / `sync` / `webhooks` must be enabled (enforced at
 compile time).
@@ -303,6 +304,14 @@ let body = response.raw.body;
 
 `RawResponse` contains status, headers, and body bytes. Its `Debug`
 implementation redacts header values and body bytes to avoid accidental leaks.
+
+With the non-default `sensitive-diagnostics` feature, `ClientConfig` and
+`RequestOptions` can attach a caller-provided sink that receives raw
+request/response snapshots and raw transport error strings. This is intentionally
+dangerous: snapshots can contain API keys, URLs, phone numbers, message text,
+headers, request bodies, and response bodies. The feature never enables itself
+from environment variables, never writes to tracing/stdout/stderr, and its own
+`Debug` output remains redacted.
 
 ## Errors
 

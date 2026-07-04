@@ -55,10 +55,13 @@ pub struct ApiResponse<T> {
     pub raw: RawResponse,
 }
 
-impl<T: fmt::Debug> fmt::Debug for ApiResponse<T> {
+impl<T> fmt::Debug for ApiResponse<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ApiResponse")
-            .field("output", &self.output)
+            .field(
+                "output",
+                &format_args!("[REDACTED; type={}]", std::any::type_name::<T>()),
+            )
             .field("meta", &self.meta)
             .field("raw", &self.raw)
             .finish()
@@ -83,6 +86,34 @@ mod tests {
         let dbg = format!("{raw:?}");
         assert!(!dbg.contains("secret-token"));
         assert!(!dbg.contains("secret-body"));
+        assert!(dbg.contains("REDACTED"));
+    }
+
+    #[test]
+    fn api_response_debug_redacts_decoded_output() {
+        #[derive(Clone, Debug)]
+        struct SensitiveOutput {
+            message: String,
+        }
+
+        let output = SensitiveOutput {
+            message: "decoded-secret-message".to_owned(),
+        };
+        assert_eq!(output.message, "decoded-secret-message");
+        let response = ApiResponse {
+            output,
+            meta: ResponseMeta::from_headers(200, &HeaderMap::new()),
+            raw: RawResponse::new(
+                200,
+                HeaderMap::new(),
+                Bytes::from_static(b"raw-secret-message"),
+            ),
+        };
+
+        let dbg = format!("{response:?}");
+        assert!(!dbg.contains("decoded-secret-message"));
+        assert!(!dbg.contains("raw-secret-message"));
+        assert!(dbg.contains("SensitiveOutput"));
         assert!(dbg.contains("REDACTED"));
     }
 }

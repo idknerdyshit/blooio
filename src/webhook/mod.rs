@@ -77,7 +77,7 @@ pub enum WebhookConversionError {
 /// This is intentionally a "peek": use it before verification only to choose
 /// which signing secret to verify with.
 pub fn peek(raw_body: &[u8]) -> Result<WebhookPeek> {
-    serde_json::from_slice(raw_body).map_err(Error::decode)
+    serde_json::from_slice(raw_body).map_err(|e| Error::decode_json::<WebhookPeek>(&e))
 }
 
 /// The kind of message event, with a raw fallback for forward-compatibility.
@@ -125,8 +125,8 @@ impl WebhookEvent {
     /// Parse a raw webhook body. Verify the signature separately, before
     /// trusting the contents.
     pub fn parse(raw_body: &[u8]) -> Result<Self> {
-        let payload: WebhookEventPayload =
-            serde_json::from_slice(raw_body).map_err(Error::decode)?;
+        let payload: WebhookEventPayload = serde_json::from_slice(raw_body)
+            .map_err(|e| Error::decode_json::<WebhookEventPayload>(&e))?;
         Ok(WebhookEvent { payload })
     }
 
@@ -271,8 +271,18 @@ mod tests {
 
     #[test]
     fn parse_rejects_malformed_json() {
-        let err = WebhookEvent::parse(b"not json").unwrap_err();
+        let err =
+            WebhookEvent::parse(br#"{"event":"message.received","text":"sk-secret"} trailing"#)
+                .unwrap_err();
         assert!(matches!(err, Error::Decode(_)));
+        let message = err.to_string();
+        assert!(message.contains("failed to decode JSON body"));
+        assert!(message.contains("WebhookEventPayload"));
+        assert!(message.contains("category="));
+        assert!(message.contains("line="));
+        assert!(message.contains("column="));
+        assert!(!message.contains("sk-secret"));
+        assert!(!message.contains("response body"));
         // A decode error is not an API error.
         assert_eq!(err.code(), None);
         assert_eq!(err.status(), None);
@@ -299,6 +309,19 @@ mod tests {
                 internal_id: Some("+15550001111".into()),
             }
         );
+    }
+
+    #[test]
+    fn peek_rejects_malformed_json_without_body_leak() {
+        let err = peek(br#"{"internal_id":"secret-internal"} trailing"#).unwrap_err();
+        assert!(matches!(err, Error::Decode(_)));
+        let message = err.to_string();
+        assert!(message.contains("WebhookPeek"));
+        assert!(message.contains("category="));
+        assert!(message.contains("line="));
+        assert!(message.contains("column="));
+        assert!(!message.contains("secret-internal"));
+        assert!(!message.contains("response body"));
     }
 
     #[test]

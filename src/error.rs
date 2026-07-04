@@ -4,7 +4,7 @@ use std::{fmt, time::Duration};
 
 #[cfg(any(feature = "async", feature = "sync"))]
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, error::Category};
 
 /// Convenience alias used throughout the crate.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -29,8 +29,8 @@ pub enum Error {
     #[error("failed to encode request body: {0}")]
     Encode(String),
 
-    /// A 2xx response body could not be deserialized into the expected type.
-    #[error("failed to decode response body: {0}")]
+    /// A JSON body could not be deserialized into the expected type.
+    #[error("failed to decode JSON body: {0}")]
     Decode(String),
 
     /// Client configuration was missing or invalid.
@@ -44,9 +44,14 @@ pub enum Error {
 }
 
 impl Error {
-    #[cfg(any(feature = "async", feature = "sync"))]
+    #[cfg(feature = "sync")]
     pub(crate) fn transport(e: impl std::fmt::Display) -> Self {
-        Error::Transport(e.to_string())
+        Error::Transport(sanitize_transport_message(&e.to_string()))
+    }
+
+    #[cfg(feature = "async")]
+    pub(crate) fn reqwest_transport(e: reqwest::Error) -> Self {
+        Error::Transport(sanitize_transport_message(&e.without_url().to_string()))
     }
 
     #[cfg(any(feature = "async", feature = "sync"))]
@@ -54,8 +59,14 @@ impl Error {
         Error::Encode(e.to_string())
     }
 
-    pub(crate) fn decode(_e: impl std::fmt::Display) -> Self {
-        Error::Decode("failed to decode JSON body".to_owned())
+    pub(crate) fn decode_json<T>(e: &serde_json::Error) -> Self {
+        Error::Decode(format!(
+            "target={}, category={}, line={}, column={}",
+            std::any::type_name::<T>(),
+            json_error_category(e.classify()),
+            e.line(),
+            e.column()
+        ))
     }
 
     #[cfg(any(feature = "async", feature = "sync"))]
@@ -124,6 +135,78 @@ impl Error {
             Error::Api(err) => err.is_retryable(),
             _ => false,
         }
+    }
+}
+
+#[cfg(any(feature = "async", feature = "sync"))]
+fn sanitize_transport_message(message: &str) -> String {
+    let Some(mut start) = next_url_start(message) else {
+        return message.to_owned();
+    };
+
+    let mut sanitized = String::with_capacity(message.len());
+    let mut rest = message;
+    loop {
+        let Some(prefix) = rest.get(..start) else {
+            sanitized.push_str(rest);
+            return sanitized;
+        };
+        sanitized.push_str(prefix);
+        sanitized.push_str("[REDACTED URL]");
+
+        let Some(url) = rest.get(start..) else {
+            return sanitized;
+        };
+        let end = url_end(url);
+        let Some(remaining) = url.get(end..) else {
+            return sanitized;
+        };
+        rest = remaining;
+
+        let Some(next) = next_url_start(rest) else {
+            sanitized.push_str(rest);
+            return sanitized;
+        };
+        start = next;
+    }
+}
+
+#[cfg(any(feature = "async", feature = "sync"))]
+fn next_url_start(value: &str) -> Option<usize> {
+    match (value.find("http://"), value.find("https://")) {
+        (Some(http), Some(https)) => Some(http.min(https)),
+        (Some(http), None) => Some(http),
+        (None, Some(https)) => Some(https),
+        (None, None) => None,
+    }
+}
+
+#[cfg(any(feature = "async", feature = "sync"))]
+fn url_end(url: &str) -> usize {
+    let mut skip_ipv6_closing_bracket = url.starts_with("http://[") || url.starts_with("https://[");
+    for (idx, ch) in url.char_indices() {
+        if ch == ']' && skip_ipv6_closing_bracket {
+            skip_ipv6_closing_bracket = false;
+            continue;
+        }
+        if url_boundary(ch) {
+            return idx;
+        }
+    }
+    url.len()
+}
+
+#[cfg(any(feature = "async", feature = "sync"))]
+fn url_boundary(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, ')' | ']' | '}' | '"' | '\'' | '<' | '>')
+}
+
+fn json_error_category(category: Category) -> &'static str {
+    match category {
+        Category::Io => "io",
+        Category::Syntax => "syntax",
+        Category::Data => "data",
+        Category::Eof => "eof",
     }
 }
 
@@ -403,9 +486,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decode_error_does_not_store_source_message() {
-        let err = Error::decode("bad response contained sk-secret-123");
-        assert!(!err.to_string().contains("sk-secret-123"));
+    fn decode_error_keeps_safe_context_without_source_body() {
+        #[allow(dead_code)]
+        #[derive(Debug, serde::Deserialize)]
+        struct Thing {
+            id: String,
+        }
+
+        let source =
+            serde_json::from_slice::<Thing>(br#"{"id":"sk-secret-123"} trailing"#).unwrap_err();
+        let err = Error::decode_json::<Thing>(&source);
+        let message = err.to_string();
+        assert!(message.contains("failed to decode JSON body"));
+        assert!(!message.contains("response body"));
+        assert!(message.contains("Thing"));
+        assert!(message.contains("category="));
+        assert!(message.contains("line="));
+        assert!(message.contains("column="));
+        assert!(!message.contains("sk-secret-123"));
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn transport_error_scrubs_urls() {
+        let err = Error::transport(
+            "error sending request for url (https://secret.example/path?token=sk-secret-123) \
+             after redirect to http://other.example/internal \
+             and https://[::1]:8443/private?token=sk-secret-ipv6",
+        );
+        let message = err.to_string();
+        assert!(message.contains("[REDACTED URL]"));
+        for forbidden in [
+            "secret.example",
+            "token=sk-secret-123",
+            "other.example",
+            "/internal",
+            "::1",
+            "8443",
+            "sk-secret-ipv6",
+        ] {
+            assert!(
+                !message.contains(forbidden),
+                "transport error leaked {forbidden:?}: {message}"
+            );
+        }
     }
 
     #[test]

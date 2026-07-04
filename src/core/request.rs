@@ -1,5 +1,7 @@
 //! The fully-resolved request description shared by both executors.
 
+use std::fmt;
+
 use http::header::AUTHORIZATION;
 
 use crate::core::operation::Operation;
@@ -12,7 +14,6 @@ pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 /// A concrete HTTP request, built once from an [`Operation`] and consumed by
 /// whichever executor performs the IO.
 #[allow(missing_docs)]
-#[derive(Debug)]
 pub struct RequestSpec {
     /// HTTP method resolved from the operation.
     pub method: http::Method,
@@ -24,6 +25,28 @@ pub struct RequestSpec {
     pub headers: Vec<(String, String)>,
     /// Request body bytes, if the operation has a body.
     pub body: Option<bytes::Bytes>,
+}
+
+impl fmt::Debug for RequestSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let body = self.body.as_ref().map_or_else(
+            || "None".to_owned(),
+            |body| format!("Some([REDACTED; {} bytes])", body.len()),
+        );
+        f.debug_struct("RequestSpec")
+            .field("method", &self.method)
+            .field(
+                "path",
+                &format_args!("[REDACTED; {} chars]", self.path.len()),
+            )
+            .field("query", &format_args!("[REDACTED; {}]", self.query.len()))
+            .field(
+                "headers",
+                &format_args!("[REDACTED; {}]", self.headers.len()),
+            )
+            .field("body", &format_args!("{body}"))
+            .finish()
+    }
 }
 
 impl RequestSpec {
@@ -193,5 +216,38 @@ mod tests {
             ]
         );
         assert_eq!(spec.headers, vec![("x-mode".to_owned(), "new".to_owned())]);
+    }
+
+    #[test]
+    fn debug_redacts_request_components() {
+        let spec = RequestSpec {
+            method: http::Method::POST,
+            path: "/chats/chat-secret-123/messages".into(),
+            query: vec![("token".into(), "query-secret".into())],
+            headers: vec![
+                (IDEMPOTENCY_KEY_HEADER.into(), "idempotency-secret".into()),
+                ("x-custom".into(), "header-secret".into()),
+            ],
+            body: Some(bytes::Bytes::from_static(br#"{"text":"body-secret"}"#)),
+        };
+
+        let dbg = format!("{spec:?}");
+        assert!(dbg.contains("POST"));
+        for forbidden in [
+            "chat-secret-123",
+            "query-secret",
+            "Idempotency-Key",
+            "idempotency-secret",
+            "x-custom",
+            "header-secret",
+            "body-secret",
+        ] {
+            assert!(
+                !dbg.contains(forbidden),
+                "RequestSpec Debug leaked {forbidden:?}: {dbg}"
+            );
+        }
+        assert!(dbg.contains("REDACTED"));
+        assert!(dbg.contains("22 bytes"));
     }
 }
