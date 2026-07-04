@@ -102,6 +102,10 @@ name = "redaction_client"
 required-features = ["tracing"]
 
 [[test]]
+name = "tracing_client"
+required-features = ["tracing"]
+
+[[test]]
 name = "live_smoke"
 required-features = ["async"]
 

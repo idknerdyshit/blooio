@@ -395,8 +395,11 @@ let app = Router::new()
 
 ## Tracing
 
-With the `tracing` feature, each request emits a `blooio.request` span carrying
-the method, path, status, and elapsed time. The API key is never recorded.
+With the `tracing` feature, each HTTP attempt emits a `blooio.request` span and
+structured events carrying the method, operation type, attempt number, retry
+budget, HTTP status when available, and elapsed time. Retries and final logical
+operation success/failure are also emitted as structured events. URLs, paths,
+query parameters, headers, bodies, and the API key are never recorded.
 
 ## Contributing
 

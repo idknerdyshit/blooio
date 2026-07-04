@@ -4,6 +4,8 @@
 mod asynchronous;
 #[cfg(feature = "sync")]
 mod blocking;
+#[cfg(feature = "tracing")]
+mod trace;
 
 #[cfg(feature = "async")]
 pub use asynchronous::Client;

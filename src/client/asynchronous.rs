@@ -1,7 +1,11 @@
 //! Async executor backed by [`reqwest`].
 
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
+#[cfg(feature = "tracing")]
+use tracing::Instrument as _;
 
+#[cfg(feature = "tracing")]
+use crate::client::trace::{self, OperationTrace};
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
 use crate::core::options::RequestOptions;
@@ -125,54 +129,68 @@ impl Client {
         op: O,
         options: RequestOptions,
     ) -> Result<ApiResponse<O::Output>> {
-        let mut spec = RequestSpec::build(&op)?;
-        spec.apply_options(&options);
         let retry = options.retry_or(self.config.retry);
+        let max_retries = retry.max_retries;
+        let operation_type = std::any::type_name::<O>();
+        #[cfg(feature = "tracing")]
+        let operation_trace = OperationTrace::new(operation_type, max_retries);
+
+        let mut spec = match RequestSpec::build(&op) {
+            Ok(spec) => spec,
+            Err(e) => {
+                #[cfg(feature = "tracing")]
+                operation_trace.failure(&O::METHOD, 0, None, &e);
+                return Err(e);
+            }
+        };
+        spec.apply_options(&options);
         // A retried mutating request must be idempotent.
-        if retry.max_retries > 0 {
+        if max_retries > 0 {
             spec.ensure_idempotency_key();
         }
         let url = url_with_query(&options.url_for(&self.config, &spec.path), &spec.query);
 
         let mut retries_done = 0u32;
-        let operation_type = std::any::type_name::<O>();
         loop {
+            let attempt = retries_done + 1;
             match self
-                .send_raw_once(&spec, &url, &options, operation_type)
+                .send_raw_once(&spec, &url, &options, operation_type, attempt, max_retries)
                 .await
             {
                 Ok(raw) => {
                     let meta = ResponseMeta::from_headers(raw.status, &raw.headers);
                     match parse_with(raw.status, &raw.body, meta.retry_after) {
-                        Ok(output) => return Ok(ApiResponse { output, meta, raw }),
+                        Ok(output) => {
+                            #[cfg(feature = "tracing")]
+                            operation_trace.success(&spec.method, attempt, raw.status);
+                            return Ok(ApiResponse { output, meta, raw });
+                        }
                         Err(e) if retry.should_retry(retries_done, &e) => {
                             let delay = retry.delay_for(retries_done, &e);
                             #[cfg(feature = "tracing")]
-                            tracing::warn!(
-                                attempt = retries_done + 1,
-                                delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
-                                code = ?e.code(),
-                                "retrying request after transient failure"
-                            );
+                            operation_trace.retry(&spec.method, attempt, attempt + 1, delay, &e);
                             tokio::time::sleep(delay).await;
                             retries_done += 1;
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => {
+                            #[cfg(feature = "tracing")]
+                            operation_trace.failure(&spec.method, attempt, Some(raw.status), &e);
+                            return Err(e);
+                        }
                     }
                 }
                 Err(e) if retry.should_retry(retries_done, &e) => {
                     let delay = retry.delay_for(retries_done, &e);
                     #[cfg(feature = "tracing")]
-                    tracing::warn!(
-                        attempt = retries_done + 1,
-                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
-                        code = ?e.code(),
-                        "retrying request after transient failure"
-                    );
+                    operation_trace.retry(&spec.method, attempt, attempt + 1, delay, &e);
                     tokio::time::sleep(delay).await;
                     retries_done += 1;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    #[cfg(feature = "tracing")]
+                    operation_trace.failure(&spec.method, attempt, None, &e);
+                    return Err(e);
+                }
             }
         }
     }
@@ -184,17 +202,13 @@ impl Client {
         url: &str,
         options: &RequestOptions,
         operation_type: &'static str,
+        attempt: u32,
+        max_retries: u32,
     ) -> Result<RawResponse> {
         #[cfg(not(feature = "tracing"))]
-        let _ = operation_type;
+        let _ = (operation_type, attempt, max_retries);
         #[cfg(feature = "tracing")]
-        let span = tracing::info_span!(
-            "blooio.request",
-            method = %spec.method,
-            operation = %operation_type,
-            status = tracing::field::Empty,
-            elapsed_ms = tracing::field::Empty,
-        );
+        let span = trace::request_span(&spec.method, operation_type, attempt, max_retries);
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
 
@@ -221,29 +235,47 @@ impl Client {
             req = req.timeout(timeout);
         }
 
-        let result = match req.send().await {
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                let headers = resp.headers().clone();
-                let bytes = resp.bytes().await.map_err(Error::transport)?;
-                Ok(RawResponse::new(status, headers, bytes))
+        let send = async {
+            match req.send().await {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let headers = resp.headers().clone();
+                    match resp.bytes().await {
+                        Ok(bytes) => Ok(RawResponse::new(status, headers, bytes)),
+                        Err(e) => Err(Error::transport(e)),
+                    }
+                }
+                Err(e) => Err(Error::transport(e)),
             }
-            Err(e) => Err(Error::transport(e)),
         };
+        #[cfg(feature = "tracing")]
+        let result = send.instrument(span.clone()).await;
+        #[cfg(not(feature = "tracing"))]
+        let result = send.await;
 
         #[cfg(feature = "tracing")]
-        {
-            if let Ok(raw) = &result {
-                span.record("status", raw.status);
+        match &result {
+            Ok(resp) => {
+                trace::attempt_response(
+                    &span,
+                    &spec.method,
+                    operation_type,
+                    attempt,
+                    max_retries,
+                    resp.status,
+                    start.elapsed(),
+                );
             }
-            span.record(
-                "elapsed_ms",
-                u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-            );
-            let _e = span.enter();
-            match &result {
-                Ok(_) => tracing::debug!("request completed"),
-                Err(e) => tracing::warn!(code = ?e.code(), "request failed"),
+            Err(e) => {
+                trace::attempt_error(
+                    &span,
+                    &spec.method,
+                    operation_type,
+                    attempt,
+                    max_retries,
+                    start.elapsed(),
+                    e,
+                );
             }
         }
 

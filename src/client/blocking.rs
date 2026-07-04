@@ -2,6 +2,8 @@
 
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 
+#[cfg(feature = "tracing")]
+use crate::client::trace::{self, OperationTrace};
 use crate::config::ClientConfig;
 use crate::core::operation::Operation;
 use crate::core::options::RequestOptions;
@@ -139,51 +141,65 @@ impl BlockingClient {
         op: O,
         options: RequestOptions,
     ) -> Result<ApiResponse<O::Output>> {
-        let mut spec = RequestSpec::build(&op)?;
-        spec.apply_options(&options);
         let retry = options.retry_or(self.config.retry);
+        let max_retries = retry.max_retries;
+        let operation_type = std::any::type_name::<O>();
+        #[cfg(feature = "tracing")]
+        let operation_trace = OperationTrace::new(operation_type, max_retries);
+
+        let mut spec = match RequestSpec::build(&op) {
+            Ok(spec) => spec,
+            Err(e) => {
+                #[cfg(feature = "tracing")]
+                operation_trace.failure(&O::METHOD, 0, None, &e);
+                return Err(e);
+            }
+        };
+        spec.apply_options(&options);
         // A retried mutating request must be idempotent.
-        if retry.max_retries > 0 {
+        if max_retries > 0 {
             spec.ensure_idempotency_key();
         }
         let url = url_with_query(&options.url_for(&self.config, &spec.path), &spec.query);
 
         let mut retries_done = 0u32;
-        let operation_type = std::any::type_name::<O>();
         loop {
-            match self.send_raw_once(&spec, &url, &options, operation_type) {
+            let attempt = retries_done + 1;
+            match self.send_raw_once(&spec, &url, &options, operation_type, attempt, max_retries) {
                 Ok(raw) => {
                     let meta = ResponseMeta::from_headers(raw.status, &raw.headers);
                     match parse_with(raw.status, &raw.body, meta.retry_after) {
-                        Ok(output) => return Ok(ApiResponse { output, meta, raw }),
+                        Ok(output) => {
+                            #[cfg(feature = "tracing")]
+                            operation_trace.success(&spec.method, attempt, raw.status);
+                            return Ok(ApiResponse { output, meta, raw });
+                        }
                         Err(e) if retry.should_retry(retries_done, &e) => {
                             let delay = retry.delay_for(retries_done, &e);
                             #[cfg(feature = "tracing")]
-                            tracing::warn!(
-                                attempt = retries_done + 1,
-                                delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
-                                code = ?e.code(),
-                                "retrying request after transient failure"
-                            );
+                            operation_trace.retry(&spec.method, attempt, attempt + 1, delay, &e);
                             std::thread::sleep(delay);
                             retries_done += 1;
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => {
+                            #[cfg(feature = "tracing")]
+                            operation_trace.failure(&spec.method, attempt, Some(raw.status), &e);
+                            return Err(e);
+                        }
                     }
                 }
                 Err(e) if retry.should_retry(retries_done, &e) => {
                     let delay = retry.delay_for(retries_done, &e);
                     #[cfg(feature = "tracing")]
-                    tracing::warn!(
-                        attempt = retries_done + 1,
-                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
-                        code = ?e.code(),
-                        "retrying request after transient failure"
-                    );
+                    operation_trace.retry(&spec.method, attempt, attempt + 1, delay, &e);
                     std::thread::sleep(delay);
                     retries_done += 1;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    #[cfg(feature = "tracing")]
+                    operation_trace.failure(&spec.method, attempt, None, &e);
+                    return Err(e);
+                }
             }
         }
     }
@@ -195,68 +211,86 @@ impl BlockingClient {
         url: &str,
         options: &RequestOptions,
         operation_type: &'static str,
+        attempt: u32,
+        max_retries: u32,
     ) -> Result<RawResponse> {
         #[cfg(not(feature = "tracing"))]
-        let _ = operation_type;
+        let _ = (operation_type, attempt, max_retries);
         #[cfg(feature = "tracing")]
-        let span = tracing::info_span!(
-            "blooio.request",
-            method = %spec.method,
-            operation = %operation_type,
-            status = tracing::field::Empty,
-            elapsed_ms = tracing::field::Empty,
-        );
-        #[cfg(feature = "tracing")]
-        let _enter = span.enter();
+        let span = trace::request_span(&spec.method, operation_type, attempt, max_retries);
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
 
-        let mut builder = http::Request::builder()
-            .method(spec.method.clone())
-            .uri(url);
-        // Key exposed only to set the header; never logged. The User-Agent is
-        // configured on the agent at build time, not per-request.
-        builder = builder.header(AUTHORIZATION, self.auth_header.expose().as_str());
-        for (k, v) in &spec.headers {
-            if k.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
-                continue;
-            }
-            builder = builder.header(k.as_str(), v.as_str());
-        }
-
-        let result = if let Some(body) = &spec.body {
-            if !spec
-                .headers
-                .iter()
-                .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
-            {
-                builder = builder.header(CONTENT_TYPE, "application/json");
-            }
-            let request = builder.body(body.as_ref()).map_err(Error::transport)?;
-            self.run_request(request, options)
-        } else {
-            let request = builder.body(()).map_err(Error::transport)?;
-            self.run_request(request, options)
-        };
-
-        let mut resp = result?;
-        let status = resp.status().as_u16();
-        let headers = resp.headers().clone();
-        let bytes = resp.body_mut().read_to_vec().map_err(Error::transport)?;
-        let raw: Result<RawResponse> = Ok(RawResponse::new(status, headers, bytes.into()));
-
         #[cfg(feature = "tracing")]
-        {
-            if let Ok(raw) = &raw {
-                span.record("status", raw.status);
+        let _enter = span.enter();
+        let raw = {
+            let mut builder = http::Request::builder()
+                .method(spec.method.clone())
+                .uri(url);
+            // Key exposed only to set the header; never logged. The User-Agent is
+            // configured on the agent at build time, not per-request.
+            builder = builder.header(AUTHORIZATION, self.auth_header.expose().as_str());
+            for (k, v) in &spec.headers {
+                if k.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
+                    continue;
+                }
+                builder = builder.header(k.as_str(), v.as_str());
             }
-            span.record(
-                "elapsed_ms",
-                u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-            );
-            match &raw {
-                Ok(_) => tracing::debug!("request completed"),
-                Err(e) => tracing::warn!(code = ?e.code(), "request failed"),
+
+            let response = if let Some(body) = &spec.body {
+                if !spec
+                    .headers
+                    .iter()
+                    .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
+                {
+                    builder = builder.header(CONTENT_TYPE, "application/json");
+                }
+                match builder.body(body.as_ref()) {
+                    Ok(request) => self.run_request(request, options),
+                    Err(e) => Err(Error::transport(e)),
+                }
+            } else {
+                match builder.body(()) {
+                    Ok(request) => self.run_request(request, options),
+                    Err(e) => Err(Error::transport(e)),
+                }
+            };
+
+            match response {
+                Ok(mut resp) => {
+                    let status = resp.status().as_u16();
+                    let headers = resp.headers().clone();
+                    match resp.body_mut().read_to_vec() {
+                        Ok(bytes) => Ok(RawResponse::new(status, headers, bytes.into())),
+                        Err(e) => Err(Error::transport(e)),
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        };
+        #[cfg(feature = "tracing")]
+        match &raw {
+            Ok(resp) => {
+                trace::attempt_response(
+                    &span,
+                    &spec.method,
+                    operation_type,
+                    attempt,
+                    max_retries,
+                    resp.status,
+                    start.elapsed(),
+                );
+            }
+            Err(e) => {
+                trace::attempt_error(
+                    &span,
+                    &spec.method,
+                    operation_type,
+                    attempt,
+                    max_retries,
+                    start.elapsed(),
+                    e,
+                );
             }
         }
 

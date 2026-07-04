@@ -2,8 +2,10 @@
 //! User-Agent) and turning on request tracing.
 //!
 //! With the default `tracing` feature enabled, each request emits a
-//! `blooio.request` span carrying the method, path, status, and elapsed time —
-//! and never the API key, which stays redacted.
+//! `blooio.request` span plus structured attempt, retry, and final operation
+//! events carrying the method, operation type, status, attempts, retry budget,
+//! and elapsed time. URLs, paths, headers, bodies, and the API key stay
+//! redacted.
 //!
 //! ```sh
 //! BLOOIO_API_KEY=sk_... cargo run --example configuration
