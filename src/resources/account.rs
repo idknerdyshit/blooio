@@ -25,31 +25,33 @@ impl Operation for GetMe {
 // Resource handle + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `account` resource group. Created via
-/// [`Client::account`](crate::Client::account).
+/// Handle for the authenticated account profile resource. Created via
+/// [`BlooioAccount::me`](crate::BlooioAccount::me).
 #[derive(Debug)]
-pub struct Account<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Me<C> {
+    pub(crate) client: C,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
-    /// Access the account resource group.
-    pub fn account(&self) -> Account<'_, crate::Client> {
-        Account { client: self }
+impl<'a> crate::BlooioAccount<'a> {
+    /// Access the authenticated account profile resource.
+    #[must_use]
+    pub fn me(self) -> Me<crate::BlooioAccount<'a>> {
+        Me { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
-    /// Access the account resource group.
-    pub fn account(&self) -> Account<'_, crate::BlockingClient> {
-        Account { client: self }
+impl<'a> crate::BlockingBlooioAccount<'a> {
+    /// Access the authenticated account profile resource.
+    #[must_use]
+    pub fn me(self) -> Me<crate::BlockingBlooioAccount<'a>> {
+        Me { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl Account<'_, crate::Client> {
+impl Me<crate::BlooioAccount<'_>> {
     /// Get the authenticated user's profile.
     pub async fn get(&self) -> Result<crate::types::MeResponse> {
         self.client.send(GetMe).await
@@ -57,7 +59,7 @@ impl Account<'_, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl Account<'_, crate::BlockingClient> {
+impl Me<crate::BlockingBlooioAccount<'_>> {
     /// Get the authenticated user's profile.
     pub fn get(&self) -> Result<crate::types::MeResponse> {
         self.client.send(GetMe)

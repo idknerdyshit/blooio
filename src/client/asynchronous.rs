@@ -4,6 +4,7 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 #[cfg(feature = "tracing")]
 use tracing::Instrument as _;
 
+use crate::client::AttemptContext;
 #[cfg(feature = "sensitive-diagnostics")]
 use crate::client::sensitive::SensitiveAttempt;
 #[cfg(feature = "tracing")]
@@ -17,36 +18,40 @@ use crate::core::ratelimit::ResponseMeta;
 use crate::core::raw::{ApiResponse, RawResponse};
 use crate::core::request::{RequestSpec, url_with_query};
 use crate::core::response::parse_with;
+use crate::credentials::BlooioCreds;
 use crate::error::{Error, Result};
-use crate::secret::Secret;
 
 /// Asynchronous Blooio API client.
 ///
 /// Cheap to clone (the underlying `reqwest::Client` is reference-counted and
 /// maintains its own connection pool).
 ///
-/// Construct one `Client` per API key/base URL and reuse or clone it across
-/// requests. Creating a fresh client for each request defeats connection reuse.
-/// Resource accessors (`client.contacts()`, `client.chat(id)`, …) are defined
-/// across the [`crate::resources`] modules.
+/// Construct one `Client` per base URL/transport configuration and reuse it
+/// across account-scoped API handles. Creating a fresh client for each request
+/// defeats connection reuse.
 #[derive(Clone, Debug)]
 pub struct Client {
     config: ClientConfig,
     http: reqwest::Client,
-    // Precomputed `Bearer <key>` header value. Built once (the key never
-    // changes after construction) and kept in `Secret` so it stays redacted.
-    auth_header: Secret<String>,
+}
+
+/// Account-scoped asynchronous Blooio API handle.
+#[derive(Clone, Copy, Debug)]
+pub struct BlooioAccount<'a> {
+    pub(crate) client: &'a Client,
+    pub(crate) creds: &'a BlooioCreds,
 }
 
 impl Client {
-    /// Build a client from an API key using production defaults.
-    pub fn new(api_key: impl Into<Secret<String>>) -> Result<Self> {
-        Self::from_config(ClientConfig::new(api_key))
+    /// Build a client using production defaults.
+    pub fn new() -> Result<Self> {
+        Self::from_config(ClientConfig::new())
     }
 
     /// Build a client from environment variables.
     ///
-    /// Reads `BLOOIO_API_KEY` (required) and `BLOOIO_BASE_URL` (optional).
+    /// Reads transport configuration such as `BLOOIO_BASE_URL`. Credentials
+    /// are intentionally separate; use [`BlooioCreds::from_env`].
     pub fn from_env() -> Result<Self> {
         Self::from_config(ClientConfig::from_env()?)
     }
@@ -68,12 +73,7 @@ impl Client {
     /// client is used as-is; values such as [`ClientConfig::timeout`] and
     /// [`ClientConfig::user_agent`] are not applied to it by this constructor.
     pub fn from_config_and_http_client(config: ClientConfig, http: reqwest::Client) -> Self {
-        let auth_header = Secret::new(format!("Bearer {}", config.api_key.expose()));
-        Client {
-            config,
-            http,
-            auth_header,
-        }
+        Client { config, http }
     }
 
     /// The configuration this client was built with.
@@ -81,18 +81,30 @@ impl Client {
         &self.config
     }
 
+    /// Create an account-scoped API handle. Credentials are borrowed and are
+    /// not retained by the root client.
+    #[must_use]
+    pub fn account<'a>(&'a self, creds: &'a BlooioCreds) -> BlooioAccount<'a> {
+        BlooioAccount {
+            client: self,
+            creds,
+        }
+    }
+}
+
+impl BlooioAccount<'_> {
     /// Execute an [`Operation`] and decode its response.
     ///
-    /// This is the single async IO entry point; every resource method delegates
-    /// here. It is also the public escape hatch for operations not covered by a
-    /// convenience method.
-    pub async fn send<O: Operation>(&self, op: O) -> Result<O::Output> {
+    /// This is the single async IO entry point for an authenticated account
+    /// handle; every resource method delegates here. It is also the public
+    /// escape hatch for operations not covered by a convenience method.
+    pub async fn send<O: Operation>(self, op: O) -> Result<O::Output> {
         self.send_with_meta(op).await.map(|(out, _meta)| out)
     }
 
     /// Execute an [`Operation`] with request-scoped transport options.
     pub async fn send_with_options<O: Operation>(
-        &self,
+        self,
         op: O,
         options: RequestOptions,
     ) -> Result<O::Output> {
@@ -104,7 +116,7 @@ impl Client {
     /// Execute an [`Operation`] and decode its response, also returning the
     /// [`ResponseMeta`] (rate-limit headers and `Retry-After`) from the HTTP
     /// response. Use this when you want to self-pace against the API's limits.
-    pub async fn send_with_meta<O: Operation>(&self, op: O) -> Result<(O::Output, ResponseMeta)> {
+    pub async fn send_with_meta<O: Operation>(self, op: O) -> Result<(O::Output, ResponseMeta)> {
         self.send_with_meta_with_options(op, RequestOptions::new())
             .await
     }
@@ -112,7 +124,7 @@ impl Client {
     /// Execute an [`Operation`] with request-scoped transport options, returning
     /// the decoded output and parsed response metadata.
     pub async fn send_with_meta_with_options<O: Operation>(
-        &self,
+        self,
         op: O,
         options: RequestOptions,
     ) -> Result<(O::Output, ResponseMeta)> {
@@ -121,7 +133,7 @@ impl Client {
     }
 
     /// Execute an [`Operation`] and return decoded output plus raw HTTP data.
-    pub async fn send_with_response<O: Operation>(&self, op: O) -> Result<ApiResponse<O::Output>> {
+    pub async fn send_with_response<O: Operation>(self, op: O) -> Result<ApiResponse<O::Output>> {
         self.send_with_response_with_options(op, RequestOptions::new())
             .await
     }
@@ -129,11 +141,11 @@ impl Client {
     /// Execute an [`Operation`] with request-scoped transport options and
     /// return decoded output plus raw HTTP data.
     pub async fn send_with_response_with_options<O: Operation>(
-        &self,
+        self,
         op: O,
         options: RequestOptions,
     ) -> Result<ApiResponse<O::Output>> {
-        let retry = options.retry_or(self.config.retry);
+        let retry = options.retry_or(self.client.config.retry);
         let max_retries = retry.max_retries;
         let operation_type = std::any::type_name::<O>();
         #[cfg(feature = "tracing")]
@@ -153,13 +165,25 @@ impl Client {
         if max_retries > 0 {
             spec.ensure_idempotency_key();
         }
-        let url = url_with_query(&options.url_for(&self.config, &spec.path), &spec.query);
+        let url = url_with_query(
+            &options.url_for(&self.client.config, &spec.path),
+            &spec.query,
+        );
 
         let mut retries_done = 0u32;
         loop {
             let attempt = retries_done + 1;
             match self
-                .send_raw_once(&spec, &url, &options, operation_type, attempt, max_retries)
+                .client
+                .send_raw_once(AttemptContext {
+                    creds: self.creds,
+                    spec: &spec,
+                    url: &url,
+                    options: &options,
+                    operation_type,
+                    attempt,
+                    max_retries,
+                })
                 .await
             {
                 Ok(raw) => {
@@ -199,54 +223,50 @@ impl Client {
             }
         }
     }
+}
 
+impl Client {
     /// A single request attempt: build, send, and read the raw body.
-    async fn send_raw_once(
-        &self,
-        spec: &RequestSpec,
-        url: &str,
-        options: &RequestOptions,
-        operation_type: &'static str,
-        attempt: u32,
-        max_retries: u32,
-    ) -> Result<RawResponse> {
+    async fn send_raw_once(&self, ctx: AttemptContext<'_>) -> Result<RawResponse> {
         #[cfg(not(any(feature = "tracing", feature = "sensitive-diagnostics")))]
-        let _ = (operation_type, attempt, max_retries);
+        let _ = (ctx.operation_type, ctx.attempt, ctx.max_retries);
         #[cfg(feature = "tracing")]
         let attempt_trace = trace::AttemptTrace::new(
-            &spec.method,
-            operation_type,
-            attempt,
-            max_retries,
-            options.trace_label.as_deref(),
+            &ctx.spec.method,
+            ctx.operation_type,
+            ctx.attempt,
+            ctx.max_retries,
+            ctx.options.trace_label.as_deref(),
         );
         #[cfg(feature = "tracing")]
         let span = trace::request_span(&attempt_trace);
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
+        let auth_header = ctx.creds.bearer_header();
         #[cfg(feature = "sensitive-diagnostics")]
         let sensitive = SensitiveAttempt::new(crate::client::sensitive::SensitiveAttemptParts {
             config: &self.config,
-            options,
-            spec,
-            url,
-            auth_header: self.auth_header.expose(),
-            operation: operation_type,
-            attempt,
-            max_retries,
+            options: ctx.options,
+            spec: ctx.spec,
+            url: ctx.url,
+            auth_header: auth_header.expose(),
+            operation: ctx.operation_type,
+            attempt: ctx.attempt,
+            max_retries: ctx.max_retries,
         });
 
-        let mut req = self.http.request(spec.method.clone(), url);
+        let mut req = self.http.request(ctx.spec.method.clone(), ctx.url);
         // The key is exposed only here, to set the header. It is never logged.
-        req = req.header(AUTHORIZATION, self.auth_header.expose().as_str());
-        for (k, v) in &spec.headers {
+        req = req.header(AUTHORIZATION, auth_header.expose().as_str());
+        for (k, v) in &ctx.spec.headers {
             if k.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
                 continue;
             }
             req = req.header(k.as_str(), v.as_str());
         }
-        if let Some(body) = &spec.body {
-            if !spec
+        if let Some(body) = &ctx.spec.body {
+            if !ctx
+                .spec
                 .headers
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
@@ -255,7 +275,7 @@ impl Client {
             }
             req = req.body(body.clone());
         }
-        if let Some(timeout) = options.timeout {
+        if let Some(timeout) = ctx.options.timeout {
             req = req.timeout(timeout);
         }
 

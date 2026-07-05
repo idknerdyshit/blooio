@@ -94,19 +94,19 @@ impl Cursor {
 /// returns an empty page, a page shorter than the requested limit, metadata
 /// showing `pagination.total` has been reached, metadata showing
 /// `pagination.has_more` is `false`, or the first fetch error.
-pub struct Paginator<'c, C, F, O>
+pub struct Paginator<C, F, O>
 where
     F: Fn(u32, u32) -> O,
     O: Operation,
     O::Output: Listing,
 {
-    client: &'c C,
+    client: C,
     make: F,
     cursor: Cursor,
     _op: PhantomData<O>,
 }
 
-impl<C, F, O> core::fmt::Debug for Paginator<'_, C, F, O>
+impl<C, F, O> core::fmt::Debug for Paginator<C, F, O>
 where
     F: Fn(u32, u32) -> O,
     O: Operation,
@@ -119,13 +119,13 @@ where
     }
 }
 
-impl<'c, C, F, O> Paginator<'c, C, F, O>
+impl<C, F, O> Paginator<C, F, O>
 where
     F: Fn(u32, u32) -> O,
     O: Operation,
     O::Output: Listing,
 {
-    pub(crate) fn new(client: &'c C, limit: NonZeroU32, make: F) -> Self {
+    pub(crate) fn new(client: C, limit: NonZeroU32, make: F) -> Self {
         Paginator {
             client,
             make,
@@ -136,7 +136,7 @@ where
 }
 
 #[cfg(feature = "async")]
-impl<'c, F, O> Paginator<'c, crate::Client, F, O>
+impl<'c, F, O> Paginator<crate::BlooioAccount<'c>, F, O>
 where
     F: Fn(u32, u32) -> O,
     O: Operation,
@@ -199,7 +199,7 @@ where
 }
 
 #[cfg(feature = "sync")]
-impl<F, O> Paginator<'_, crate::BlockingClient, F, O>
+impl<F, O> Paginator<crate::BlockingBlooioAccount<'_>, F, O>
 where
     F: Fn(u32, u32) -> O,
     O: Operation,
@@ -231,7 +231,7 @@ where
 }
 
 #[cfg(feature = "sync")]
-impl<F, O> Iterator for Paginator<'_, crate::BlockingClient, F, O>
+impl<F, O> Iterator for Paginator<crate::BlockingBlooioAccount<'_>, F, O>
 where
     F: Fn(u32, u32) -> O,
     O: Operation,

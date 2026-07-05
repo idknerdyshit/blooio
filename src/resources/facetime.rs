@@ -47,31 +47,32 @@ impl Operation for CallFaceTime {
 // Resource handle + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `facetime` resource group. Created via
-/// [`Client::facetime`](crate::Client::facetime).
+/// Handle for the `facetime` resource group.
 #[derive(Debug)]
-pub struct FaceTime<'c, C> {
-    pub(crate) client: &'c C,
+pub struct FaceTime<C> {
+    pub(crate) client: C,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the facetime resource group.
-    pub fn facetime(&self) -> FaceTime<'_, crate::Client> {
+    #[must_use]
+    pub fn facetime(self) -> FaceTime<crate::BlooioAccount<'a>> {
         FaceTime { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the facetime resource group.
-    pub fn facetime(&self) -> FaceTime<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn facetime(self) -> FaceTime<crate::BlockingBlooioAccount<'a>> {
         FaceTime { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl FaceTime<'_, crate::Client> {
+impl FaceTime<crate::BlooioAccount<'_>> {
     /// Initiate a `FaceTime` call to a handle.
     pub async fn call(&self, handle: impl Into<String>) -> Result<FaceTimeCallResponse> {
         self.client
@@ -83,7 +84,7 @@ impl FaceTime<'_, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl FaceTime<'_, crate::BlockingClient> {
+impl FaceTime<crate::BlockingBlooioAccount<'_>> {
     /// Initiate a `FaceTime` call to a handle.
     pub fn call(&self, handle: impl Into<String>) -> Result<FaceTimeCallResponse> {
         self.client.send(CallFaceTime {

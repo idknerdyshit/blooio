@@ -9,12 +9,15 @@
 
 use std::env;
 
-use blooio::{Client, Error, error::codes};
+use blooio::{BlooioCreds, Client, Error, error::codes};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()))?;
-    let chat = client.chat(env::var("CHAT_ID").unwrap_or_else(|_| "chat_demo".into()));
+    let client = Client::new()?;
+    let creds =
+        BlooioCreds::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()));
+    let account = client.account(&creds);
+    let chat = account.chat(env::var("CHAT_ID").unwrap_or_else(|_| "chat_demo".into()));
 
     match chat.send_text("hello").await {
         Ok(resp) => println!("delivered: {:?}", resp.ids()),
@@ -50,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // The same information is available without destructuring, via accessors:
-    if let Err(e) = client.account().get().await {
+    if let Err(e) = account.me().get().await {
         println!("status={:?} code={:?}", e.status(), e.code());
     }
 

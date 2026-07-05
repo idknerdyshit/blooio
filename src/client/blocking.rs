@@ -2,6 +2,7 @@
 
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 
+use crate::client::AttemptContext;
 #[cfg(feature = "sensitive-diagnostics")]
 use crate::client::sensitive::{SensitiveAttempt, SensitiveAttemptParts};
 #[cfg(feature = "tracing")]
@@ -15,35 +16,39 @@ use crate::core::ratelimit::ResponseMeta;
 use crate::core::raw::{ApiResponse, RawResponse};
 use crate::core::request::{RequestSpec, url_with_query};
 use crate::core::response::parse_with;
+use crate::credentials::BlooioCreds;
 use crate::error::{Error, Result};
-use crate::secret::Secret;
 
 /// Blocking Blooio API client.
 ///
 /// A thin wrapper over a [`ureq::Agent`]; cloning shares the connection pool.
 ///
-/// Construct one `BlockingClient` per API key/base URL and reuse or clone it
-/// across requests. Creating a fresh client for each request defeats connection
-/// reuse.
-/// Resource accessors mirror those on the async [`Client`](crate::Client).
+/// Construct one `BlockingClient` per base URL/transport configuration and
+/// reuse or clone it across account-scoped API handles. Creating a fresh client
+/// for each request defeats connection reuse.
 #[derive(Clone, Debug)]
 pub struct BlockingClient {
     config: ClientConfig,
     agent: ureq::Agent,
-    // Precomputed `Bearer <key>` header value. Built once (the key never
-    // changes after construction) and kept in `Secret` so it stays redacted.
-    auth_header: Secret<String>,
+}
+
+/// Account-scoped blocking Blooio API handle.
+#[derive(Clone, Copy, Debug)]
+pub struct BlockingBlooioAccount<'a> {
+    pub(crate) client: &'a BlockingClient,
+    pub(crate) creds: &'a BlooioCreds,
 }
 
 impl BlockingClient {
-    /// Build a client from an API key using production defaults.
-    pub fn new(api_key: impl Into<Secret<String>>) -> Result<Self> {
-        Self::from_config(ClientConfig::new(api_key))
+    /// Build a client using production defaults.
+    pub fn new() -> Result<Self> {
+        Self::from_config(ClientConfig::new())
     }
 
     /// Build a client from environment variables.
     ///
-    /// Reads `BLOOIO_API_KEY` (required) and `BLOOIO_BASE_URL` (optional).
+    /// Reads transport configuration such as `BLOOIO_BASE_URL`. Credentials
+    /// are intentionally separate; use [`BlooioCreds::from_env`].
     pub fn from_env() -> Result<Self> {
         Self::from_config(ClientConfig::from_env()?)
     }
@@ -76,12 +81,7 @@ impl BlockingClient {
     /// values such as [`ClientConfig::timeout`] and
     /// [`ClientConfig::user_agent`] are not applied to it by this constructor.
     pub fn from_config_and_agent(config: ClientConfig, agent: ureq::Agent) -> Self {
-        let auth_header = Secret::new(format!("Bearer {}", config.api_key.expose()));
-        BlockingClient {
-            config,
-            agent,
-            auth_header,
-        }
+        BlockingClient { config, agent }
     }
 
     /// The configuration this client was built with.
@@ -89,21 +89,34 @@ impl BlockingClient {
         &self.config
     }
 
+    /// Create an account-scoped API handle. Credentials are borrowed and are
+    /// not retained by the root client.
+    #[must_use]
+    pub fn account<'a>(&'a self, creds: &'a BlooioCreds) -> BlockingBlooioAccount<'a> {
+        BlockingBlooioAccount {
+            client: self,
+            creds,
+        }
+    }
+}
+
+impl BlockingBlooioAccount<'_> {
     /// Execute an [`Operation`] and decode its response.
     ///
-    /// The single blocking IO entry point; every resource method delegates
-    /// here. Also the public escape hatch for uncovered operations.
+    /// The single blocking IO entry point for an authenticated account handle;
+    /// every resource method delegates here. Also the public escape hatch for
+    /// uncovered operations.
     // Takes `op` by value to mirror the async `Client::send` signature; this
     // path only needs a borrow, but API symmetry across the two clients wins.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn send<O: Operation>(&self, op: O) -> Result<O::Output> {
+    pub fn send<O: Operation>(self, op: O) -> Result<O::Output> {
         self.send_with_meta(op).map(|(out, _meta)| out)
     }
 
     /// Execute an [`Operation`] with request-scoped transport options.
     #[allow(clippy::needless_pass_by_value)]
     pub fn send_with_options<O: Operation>(
-        &self,
+        self,
         op: O,
         options: RequestOptions,
     ) -> Result<O::Output> {
@@ -115,7 +128,7 @@ impl BlockingClient {
     /// [`ResponseMeta`] (rate-limit headers and `Retry-After`) from the HTTP
     /// response. Use this when you want to self-pace against the API's limits.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn send_with_meta<O: Operation>(&self, op: O) -> Result<(O::Output, ResponseMeta)> {
+    pub fn send_with_meta<O: Operation>(self, op: O) -> Result<(O::Output, ResponseMeta)> {
         self.send_with_meta_with_options(op, RequestOptions::new())
     }
 
@@ -123,7 +136,7 @@ impl BlockingClient {
     /// the decoded output and parsed response metadata.
     #[allow(clippy::needless_pass_by_value)]
     pub fn send_with_meta_with_options<O: Operation>(
-        &self,
+        self,
         op: O,
         options: RequestOptions,
     ) -> Result<(O::Output, ResponseMeta)> {
@@ -133,7 +146,7 @@ impl BlockingClient {
 
     /// Execute an [`Operation`] and return decoded output plus raw HTTP data.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn send_with_response<O: Operation>(&self, op: O) -> Result<ApiResponse<O::Output>> {
+    pub fn send_with_response<O: Operation>(self, op: O) -> Result<ApiResponse<O::Output>> {
         self.send_with_response_with_options(op, RequestOptions::new())
     }
 
@@ -141,11 +154,11 @@ impl BlockingClient {
     /// return decoded output plus raw HTTP data.
     #[allow(clippy::needless_pass_by_value)]
     pub fn send_with_response_with_options<O: Operation>(
-        &self,
+        self,
         op: O,
         options: RequestOptions,
     ) -> Result<ApiResponse<O::Output>> {
-        let retry = options.retry_or(self.config.retry);
+        let retry = options.retry_or(self.client.config.retry);
         let max_retries = retry.max_retries;
         let operation_type = std::any::type_name::<O>();
         #[cfg(feature = "tracing")]
@@ -165,12 +178,23 @@ impl BlockingClient {
         if max_retries > 0 {
             spec.ensure_idempotency_key();
         }
-        let url = url_with_query(&options.url_for(&self.config, &spec.path), &spec.query);
+        let url = url_with_query(
+            &options.url_for(&self.client.config, &spec.path),
+            &spec.query,
+        );
 
         let mut retries_done = 0u32;
         loop {
             let attempt = retries_done + 1;
-            match self.send_raw_once(&spec, &url, &options, operation_type, attempt, max_retries) {
+            match self.client.send_raw_once(AttemptContext {
+                creds: self.creds,
+                spec: &spec,
+                url: &url,
+                options: &options,
+                operation_type,
+                attempt,
+                max_retries,
+            }) {
                 Ok(raw) => {
                     let meta = ResponseMeta::from_headers(raw.status, &raw.headers);
                     match parse_with(raw.status, &raw.body, meta.retry_after) {
@@ -208,60 +232,56 @@ impl BlockingClient {
             }
         }
     }
+}
 
+impl BlockingClient {
     /// A single request attempt: build, send, and read the raw body.
-    fn send_raw_once(
-        &self,
-        spec: &RequestSpec,
-        url: &str,
-        options: &RequestOptions,
-        operation_type: &'static str,
-        attempt: u32,
-        max_retries: u32,
-    ) -> Result<RawResponse> {
+    fn send_raw_once(&self, ctx: AttemptContext<'_>) -> Result<RawResponse> {
         #[cfg(not(any(feature = "tracing", feature = "sensitive-diagnostics")))]
-        let _ = (operation_type, attempt, max_retries);
+        let _ = (ctx.operation_type, ctx.attempt, ctx.max_retries);
         #[cfg(feature = "tracing")]
         let attempt_trace = trace::AttemptTrace::new(
-            &spec.method,
-            operation_type,
-            attempt,
-            max_retries,
-            options.trace_label.as_deref(),
+            &ctx.spec.method,
+            ctx.operation_type,
+            ctx.attempt,
+            ctx.max_retries,
+            ctx.options.trace_label.as_deref(),
         );
         #[cfg(feature = "tracing")]
         let span = trace::request_span(&attempt_trace);
         #[cfg(feature = "tracing")]
         let start = std::time::Instant::now();
+        let auth_header = ctx.creds.bearer_header();
         #[cfg(feature = "sensitive-diagnostics")]
         let sensitive = SensitiveAttempt::new(SensitiveAttemptParts {
             config: &self.config,
-            options,
-            spec,
-            url,
-            auth_header: self.auth_header.expose(),
-            operation: operation_type,
-            attempt,
-            max_retries,
+            options: ctx.options,
+            spec: ctx.spec,
+            url: ctx.url,
+            auth_header: auth_header.expose(),
+            operation: ctx.operation_type,
+            attempt: ctx.attempt,
+            max_retries: ctx.max_retries,
         });
 
         #[cfg(feature = "tracing")]
         let _enter = span.enter();
         let mut builder = http::Request::builder()
-            .method(spec.method.clone())
-            .uri(url);
+            .method(ctx.spec.method.clone())
+            .uri(ctx.url);
         // Key exposed only to set the header; never logged. The User-Agent is
         // configured on the agent at build time, not per-request.
-        builder = builder.header(AUTHORIZATION, self.auth_header.expose().as_str());
-        for (k, v) in &spec.headers {
+        builder = builder.header(AUTHORIZATION, auth_header.expose().as_str());
+        for (k, v) in &ctx.spec.headers {
             if k.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
                 continue;
             }
             builder = builder.header(k.as_str(), v.as_str());
         }
 
-        let response = if let Some(body) = &spec.body {
-            if !spec
+        let response = if let Some(body) = &ctx.spec.body {
+            if !ctx
+                .spec
                 .headers
                 .iter()
                 .any(|(k, _)| k.eq_ignore_ascii_case(CONTENT_TYPE.as_str()))
@@ -270,14 +290,14 @@ impl BlockingClient {
             }
             self.run_built_request(
                 builder.body(body.as_ref()),
-                options,
+                ctx.options,
                 #[cfg(feature = "sensitive-diagnostics")]
                 &sensitive,
             )
         } else {
             self.run_built_request(
                 builder.body(()),
-                options,
+                ctx.options,
                 #[cfg(feature = "sensitive-diagnostics")]
                 &sensitive,
             )

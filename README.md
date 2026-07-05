@@ -49,17 +49,19 @@ blooio = { version = "1", default-features = false, features = ["webhooks"] }
 ## Quick start (async)
 
 ```rust,no_run
-use blooio::Client;
+use blooio::{BlooioCreds, Client};
 
 #[tokio::main]
 async fn main() -> blooio::Result<()> {
     let client = Client::from_env()?;
+    let creds = BlooioCreds::from_env()?;
+    let account = client.account(&creds);
 
     // Who am I?
-    let me = client.account().get().await?;
+    let me = account.me().get().await?;
 
     // Send a message.
-    let chat = client.chat("chat-id");
+    let chat = account.chat("chat-id");
     chat.send_text("hello from rust").await?;
 
     Ok(())
@@ -69,11 +71,13 @@ async fn main() -> blooio::Result<()> {
 ## Quick start (blocking)
 
 ```rust,no_run
-use blooio::BlockingClient;
+use blooio::{BlockingClient, BlooioCreds};
 
 fn main() -> blooio::Result<()> {
     let client = BlockingClient::from_env()?;
-    client.chat("chat-id").send_text("hello from rust")?;
+    let creds = BlooioCreds::from_env()?;
+    let account = client.account(&creds);
+    account.chat("chat-id").send_text("hello from rust")?;
     Ok(())
 }
 ```
@@ -83,10 +87,10 @@ method names, differing only by `.await`.
 
 ## Client reuse
 
-Create one client per API key/base URL and reuse it for that configuration. The
-async `Client` wraps a pooled `reqwest::Client`; the blocking `BlockingClient`
-wraps a pooled `ureq::Agent`. Cloning either Blooio client is cheap and shares
-the underlying transport state.
+Create one client per base URL/transport configuration and reuse it across
+account-scoped credential handles. The async `Client` wraps a pooled
+`reqwest::Client`; the blocking `BlockingClient` wraps a pooled `ureq::Agent`.
+Cloning either Blooio client is cheap and shares the underlying transport state.
 
 Avoid constructing a fresh client inside hot request loops, because that defeats
 connection reuse. If your application already owns a configured HTTP transport,
@@ -95,11 +99,11 @@ inject it with `Client::from_config_and_http_client` or
 
 ## Resources
 
-Resource handles hang off the client and group the endpoints:
+Resource handles hang off an account-scoped handle and group the endpoints:
 
 | Handle               | Highlights                                                            |
 | -------------------- | --------------------------------------------------------------------- |
-| `account()`          | `get`                                                                 |
+| `me()`               | `get`                                                                 |
 | `chats()` / `chat(id)` | `list`, `send`/`send_text`, messages, reactions, polls, typing, read receipts, backgrounds |
 | `contacts()`         | `list`, `create`, `get`, `update`, `delete`, `capabilities`, tags     |
 | `groups()`           | `list`, `create`, `get`, `update`, `delete`, icons, `members(id)`     |
@@ -116,15 +120,14 @@ Endpoints with many optional fields use a fluent builder. For example, sending
 a message:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
-let message = client
-    .chat("chat-id")
-    .message()
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
+let chat = account.chat("chat-id");
+let message = chat.message()
     .text("hi")
     .effect("slam")
     .use_typing_indicator(true)
     .idempotency_key("abc-123");
-client.chat("chat-id").send(message).await?;
+chat.send(message).await?;
 # Ok(()) }
 ```
 
@@ -133,15 +136,15 @@ client.chat("chat-id").send(message).await?;
 List endpoints expose a `*_all` paginator that fetches successive pages lazily:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
-let mut pages = client.chats().list_all();
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
+let mut pages = account.chats().list_all();
 while let Some(page) = pages.next_page().await {
     for chat in page? {
         // ...
     }
 }
 // or drain everything:
-let all = client.contacts().list_all().collect_all().await?;
+let all = account.contacts().list_all().collect_all().await?;
 # Ok(()) }
 ```
 
@@ -150,10 +153,10 @@ In the blocking client, the paginator also implements `Iterator`.
 With the async client, a paginator can also be converted into a `Stream`:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
 use futures::TryStreamExt;
 
-let chats = client.chats().list_all().stream().try_collect::<Vec<_>>().await?;
+let chats = account.chats().list_all().stream().try_collect::<Vec<_>>().await?;
 # Ok(()) }
 ```
 
@@ -168,10 +171,10 @@ Every endpoint is described once as a public [`Operation`]. Anything not covered
 by a convenience method can be sent directly:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
 use blooio::resources::chats::ListChats;
 
-let first_page = client
+let first_page = account
     .send(ListChats {
         limit: Some(25),
         offset: Some(0),
@@ -185,11 +188,11 @@ let first_page = client
 This is also useful for request-scoped transport options:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
 use blooio::{RequestOptions, RetryPolicy};
 use blooio::resources::account::GetMe;
 
-let account = client
+let me = account
     .send_with_options(GetMe, RequestOptions::new().retry(RetryPolicy::none()))
     .await?;
 # Ok(()) }
@@ -204,25 +207,28 @@ are passed through to Blooio unchanged rather than constrained to SDK enums.
 
 ## Configuration
 
-`Client::from_env()` and `BlockingClient::from_env()` read `BLOOIO_API_KEY`
-(required) and `BLOOIO_BASE_URL` (optional). `Client::new(key)` uses production
-defaults. For more control, build a `ClientConfig`:
+`Client::from_env()` and `BlockingClient::from_env()` read transport settings
+such as `BLOOIO_BASE_URL` (optional). `BlooioCreds::from_env()` reads
+`BLOOIO_API_KEY`. `Client::new()` uses production transport defaults. For more
+control, build a `ClientConfig`:
 
 ```rust,no_run
-use blooio::{Client, ClientConfig};
+use blooio::{BlooioCreds, Client, ClientConfig};
 use std::time::Duration;
 
 # fn demo() -> blooio::Result<()> {
-let config = ClientConfig::new("my-api-key")
+let config = ClientConfig::new()
     .with_base_url("https://backend.blooio.com/v2/api")
     .with_timeout(Duration::from_secs(10))
     .with_user_agent("my-app/1.0");
 let client = Client::from_config(config)?;
+let creds = BlooioCreds::new("my-api-key");
+let account = client.account(&creds);
 # Ok(()) }
 ```
 
-`ClientConfig::from_env()` returns the same configuration without constructing
-a client.
+`ClientConfig::from_env()` returns transport configuration without constructing
+a client or reading credentials.
 
 Applications that already own an HTTP client can reuse it:
 
@@ -230,13 +236,13 @@ Applications that already own an HTTP client can reuse it:
 use blooio::{Client, ClientConfig};
 
 # fn demo(http: reqwest::Client) -> blooio::Result<()> {
-let config = ClientConfig::new("my-api-key");
+let config = ClientConfig::new();
 let client = Client::from_config_and_http_client(config, http);
 # Ok(()) }
 ```
 
-The API key is wrapped in a `Secret`, which zeroizes on drop and redacts itself
-in `Debug` output (`api_key: [REDACTED]`) — it is never logged or serialized in
+`BlooioCreds` wraps the API key in a `Secret`, which zeroizes on drop and
+redacts itself in `Debug` output — it is never logged or serialized in
 cleartext.
 
 ### Retries and rate limits
@@ -248,17 +254,17 @@ no-code `429` responses are treated as transient, but documented quota/cap
 
 Per-request transport options are available at the executor layer. Extra
 headers override operation headers except `Authorization`, which is always
-injected from the client's redacted API key. Extra query parameters are appended
+injected from account-scoped credentials. Extra query parameters are appended
 after the operation's query parameters. A per-request base URL is concatenated
 with the operation path, so include the API prefix you need, such as
 `https://backend.blooio.com/v2/api` for v2 operations.
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
 use blooio::{RequestOptions, RetryPolicy};
 use std::time::Duration;
 
-let account = client
+let me = account
     .send_with_options(
         blooio::resources::account::GetMe,
         RequestOptions::new()
@@ -281,8 +287,8 @@ Use `send_with_meta` to inspect response metadata such as rate-limit headers and
 `Retry-After`:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
-let (_account, meta) = client.send_with_meta(blooio::resources::account::GetMe).await?;
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
+let (_me, meta) = account.send_with_meta(blooio::resources::account::GetMe).await?;
 if let Some(limit) = meta.rate_limit {
     let remaining = limit.remaining;
 }
@@ -293,8 +299,8 @@ Use `send_with_response` when you need the decoded output and the raw HTTP
 response from the same request:
 
 ```rust,no_run
-# async fn demo(client: blooio::Client) -> blooio::Result<()> {
-let response = client
+# async fn demo(account: blooio::BlooioAccount<'_>) -> blooio::Result<()> {
+let response = account
     .send_with_response(blooio::resources::account::GetMe)
     .await?;
 let status = response.raw.status;

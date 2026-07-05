@@ -16,7 +16,7 @@
 use std::env;
 use std::time::Duration;
 
-use blooio::{Client, ClientConfig};
+use blooio::{BlooioCreds, Client, ClientConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,19 +26,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let config =
-        ClientConfig::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()))
-            // Point at a staging deployment or a local mock; trailing slashes are trimmed.
-            .with_base_url("https://backend.blooio.com/v2/api")
-            .with_timeout(Duration::from_secs(10))
-            .with_user_agent("acme-bot/1.4 (+https://acme.example)");
+    let config = ClientConfig::new()
+        // Point at a staging deployment or a local mock; trailing slashes are trimmed.
+        .with_base_url("https://backend.blooio.com/v2/api")
+        .with_timeout(Duration::from_secs(10))
+        .with_user_agent("acme-bot/1.4 (+https://acme.example)");
 
     let client = Client::from_config(config)?;
+    let creds =
+        BlooioCreds::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()));
+    let account = client.account(&creds);
 
-    // `ClientConfig` derives a redacting `Debug`: the key prints as [REDACTED].
+    // `ClientConfig` contains transport settings only; credentials stay separate.
     println!("config: {:?}", client.config());
 
-    let me = client.account().get().await?;
+    let me = account.me().get().await?;
     println!("ok — user {:?}", me.user_id);
 
     Ok(())

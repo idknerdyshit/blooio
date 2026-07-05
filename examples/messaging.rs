@@ -9,12 +9,15 @@
 
 use std::env;
 
-use blooio::Client;
+use blooio::{BlooioCreds, Client};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = Client::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()))?;
-    let chat = client.chat(env::var("CHAT_ID").unwrap_or_else(|_| "chat_demo".into()));
+    let client = Client::new()?;
+    let creds =
+        BlooioCreds::new(env::var("BLOOIO_API_KEY").unwrap_or_else(|_| "sk_demo_key".into()));
+    let account = client.account(&creds);
+    let chat = account.chat(env::var("CHAT_ID").unwrap_or_else(|_| "chat_demo".into()));
 
     // `chat.message()` starts a builder pre-bound to this chat. Each setter
     // takes `self`, so they chain. Nothing is sent until `chat.send(..)`.

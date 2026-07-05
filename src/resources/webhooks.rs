@@ -91,7 +91,7 @@ pub struct ReplayResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Operations (public escape hatch — usable via `client.send(..)`).
+// Operations (public escape hatch — usable via `account.send(..)`).
 // ---------------------------------------------------------------------------
 
 /// `GET /webhooks`
@@ -335,39 +335,40 @@ impl Operation for ReplayWebhookEvent {
 // Resource handles + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `webhooks` resource group. Created via
-/// [`Client::webhooks`](crate::Client::webhooks).
+/// Handle for the `webhooks` resource group.
 #[derive(Debug)]
-pub struct Webhooks<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Webhooks<C> {
+    pub(crate) client: C,
 }
 
 /// Handle for the `webhooks/{webhookId}/logs` sub-resource. Created via
 /// [`Webhooks::logs`].
 #[derive(Debug)]
-pub struct WebhookLogs<'c, C> {
-    pub(crate) client: &'c C,
+pub struct WebhookLogs<C> {
+    pub(crate) client: C,
     pub(crate) webhook_id: String,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the webhooks resource group.
-    pub fn webhooks(&self) -> Webhooks<'_, crate::Client> {
+    #[must_use]
+    pub fn webhooks(self) -> Webhooks<crate::BlooioAccount<'a>> {
         Webhooks { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the webhooks resource group.
-    pub fn webhooks(&self) -> Webhooks<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn webhooks(self) -> Webhooks<crate::BlockingBlooioAccount<'a>> {
         Webhooks { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl<'c> Webhooks<'c, crate::Client> {
+impl<'c> Webhooks<crate::BlooioAccount<'c>> {
     /// List all webhooks.
     pub async fn list(&self) -> Result<ListWebhooksResponse> {
         self.client.send(ListWebhooks).await
@@ -414,7 +415,7 @@ impl<'c> Webhooks<'c, crate::Client> {
     }
 
     /// Access the logs sub-resource for a specific webhook.
-    pub fn logs(&self, webhook_id: impl Into<String>) -> WebhookLogs<'c, crate::Client> {
+    pub fn logs(&self, webhook_id: impl Into<String>) -> WebhookLogs<crate::BlooioAccount<'c>> {
         WebhookLogs {
             client: self.client,
             webhook_id: webhook_id.into(),
@@ -423,7 +424,7 @@ impl<'c> Webhooks<'c, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl<'c> Webhooks<'c, crate::BlockingClient> {
+impl<'c> Webhooks<crate::BlockingBlooioAccount<'c>> {
     /// List all webhooks.
     pub fn list(&self) -> Result<ListWebhooksResponse> {
         self.client.send(ListWebhooks)
@@ -461,7 +462,10 @@ impl<'c> Webhooks<'c, crate::BlockingClient> {
     }
 
     /// Access the logs sub-resource for a specific webhook.
-    pub fn logs(&self, webhook_id: impl Into<String>) -> WebhookLogs<'c, crate::BlockingClient> {
+    pub fn logs(
+        &self,
+        webhook_id: impl Into<String>,
+    ) -> WebhookLogs<crate::BlockingBlooioAccount<'c>> {
         WebhookLogs {
             client: self.client,
             webhook_id: webhook_id.into(),
@@ -470,7 +474,7 @@ impl<'c> Webhooks<'c, crate::BlockingClient> {
 }
 
 #[cfg(feature = "async")]
-impl<'c> WebhookLogs<'c, crate::Client> {
+impl<'c> WebhookLogs<crate::BlooioAccount<'c>> {
     /// List logs for this webhook (first page, no filters).
     pub async fn list(&self) -> Result<ListWebhookLogsResponse> {
         self.client
@@ -489,8 +493,11 @@ impl<'c> WebhookLogs<'c, crate::Client> {
     /// A paginator over all logs for this webhook.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListWebhookLogs + use<'c>, ListWebhookLogs>
-    {
+    ) -> Paginator<
+        crate::BlooioAccount<'c>,
+        impl Fn(u32, u32) -> ListWebhookLogs + use<'c>,
+        ListWebhookLogs,
+    > {
         let webhook_id = self.webhook_id.clone();
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, move |offset, limit| {
             ListWebhookLogs {
@@ -514,7 +521,7 @@ impl<'c> WebhookLogs<'c, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl<'c> WebhookLogs<'c, crate::BlockingClient> {
+impl<'c> WebhookLogs<crate::BlockingBlooioAccount<'c>> {
     /// List logs for this webhook (first page, no filters).
     pub fn list(&self) -> Result<ListWebhookLogsResponse> {
         self.client.send(ListWebhookLogs {
@@ -532,8 +539,7 @@ impl<'c> WebhookLogs<'c, crate::BlockingClient> {
     pub fn list_all(
         &self,
     ) -> Paginator<
-        'c,
-        crate::BlockingClient,
+        crate::BlockingBlooioAccount<'c>,
         impl Fn(u32, u32) -> ListWebhookLogs + use<'c>,
         ListWebhookLogs,
     > {

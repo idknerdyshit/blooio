@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 use blooio::BlockingClient;
 #[cfg(feature = "async")]
 use blooio::Client;
-use blooio::ClientConfig;
 use blooio::resources::webhooks::{CreateWebhookResponse, RotateSecretResponse};
+use blooio::{BlooioCreds, ClientConfig};
 #[cfg(feature = "sync")]
 use httpmock::prelude::{GET, MockServer as HttpMockServer, POST};
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -91,16 +91,23 @@ fn assert_trace_is_redacted(captured: &str) {
 
 #[test]
 fn debug_never_reveals_key() {
-    let config = ClientConfig::new(SECRET_KEY);
+    let config = ClientConfig::new();
+    let creds = BlooioCreds::new(SECRET_KEY);
     let dbg_config = format!("{config:?}");
-    assert!(dbg_config.contains("[REDACTED]"));
     assert!(!dbg_config.contains(SECRET_KEY));
+    let dbg_creds = format!("{creds:?}");
+    assert!(dbg_creds.contains("[REDACTED]"));
+    assert!(!dbg_creds.contains(SECRET_KEY));
 
     #[cfg(feature = "async")]
     {
         let client = Client::from_config(config.clone()).unwrap();
         let dbg_client = format!("{client:?}");
         assert!(!dbg_client.contains(SECRET_KEY));
+        let account = client.account(&creds);
+        let dbg_account = format!("{account:?}");
+        assert!(dbg_account.contains("[REDACTED]"));
+        assert!(!dbg_account.contains(SECRET_KEY));
     }
 
     #[cfg(feature = "sync")]
@@ -108,6 +115,10 @@ fn debug_never_reveals_key() {
         let client = BlockingClient::from_config(config).unwrap();
         let dbg_client = format!("{client:?}");
         assert!(!dbg_client.contains(SECRET_KEY));
+        let account = client.account(&creds);
+        let dbg_account = format!("{account:?}");
+        assert!(dbg_account.contains("[REDACTED]"));
+        assert!(!dbg_account.contains(SECRET_KEY));
     }
 }
 
@@ -167,10 +178,12 @@ async fn async_tracing_never_emits_the_key() {
         .mount(&server)
         .await;
 
-    let client =
-        Client::from_config(ClientConfig::new(SECRET_KEY).with_base_url(server.uri())).unwrap();
-    let _ = client.account().get().await.unwrap();
+    let client = Client::from_config(ClientConfig::new().with_base_url(server.uri())).unwrap();
+    let creds = BlooioCreds::new(SECRET_KEY);
+    let account = client.account(&creds);
+    let _ = account.me().get().await.unwrap();
     let _ = client
+        .account(&creds)
         .chat(SENSITIVE_PATH_ID)
         .send_text("hi")
         .await
@@ -201,10 +214,15 @@ fn blocking_tracing_never_emits_the_key() {
     });
 
     let client =
-        BlockingClient::from_config(ClientConfig::new(SECRET_KEY).with_base_url(server.base_url()))
-            .unwrap();
-    let _ = client.account().get().unwrap();
-    let _ = client.chat(SENSITIVE_PATH_ID).send_text("hi").unwrap();
+        BlockingClient::from_config(ClientConfig::new().with_base_url(server.base_url())).unwrap();
+    let creds = BlooioCreds::new(SECRET_KEY);
+    let account = client.account(&creds);
+    let _ = account.me().get().unwrap();
+    let _ = client
+        .account(&creds)
+        .chat(SENSITIVE_PATH_ID)
+        .send_text("hi")
+        .unwrap();
 
     mock.assert();
     chat_mock.assert();

@@ -853,26 +853,28 @@ impl Operation for RemoveChatBackground {
 
 /// Handle for the top-level `chats` collection (listing).
 #[derive(Debug)]
-pub struct Chats<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Chats<C> {
+    pub(crate) client: C,
 }
 
 /// Handle scoped to a single chat.
 #[derive(Debug)]
-pub struct Chat_<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Chat_<C> {
+    pub(crate) client: C,
     pub(crate) chat_id: String,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the chats collection (listing).
-    pub fn chats(&self) -> Chats<'_, crate::Client> {
+    #[must_use]
+    pub fn chats(self) -> Chats<crate::BlooioAccount<'a>> {
         Chats { client: self }
     }
 
     /// Operate on a single chat.
-    pub fn chat(&self, chat_id: impl Into<String>) -> Chat_<'_, crate::Client> {
+    #[must_use]
+    pub fn chat(self, chat_id: impl Into<String>) -> Chat_<crate::BlooioAccount<'a>> {
         Chat_ {
             client: self,
             chat_id: chat_id.into(),
@@ -881,14 +883,16 @@ impl crate::Client {
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the chats collection (listing).
-    pub fn chats(&self) -> Chats<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn chats(self) -> Chats<crate::BlockingBlooioAccount<'a>> {
         Chats { client: self }
     }
 
     /// Operate on a single chat.
-    pub fn chat(&self, chat_id: impl Into<String>) -> Chat_<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn chat(self, chat_id: impl Into<String>) -> Chat_<crate::BlockingBlooioAccount<'a>> {
         Chat_ {
             client: self,
             chat_id: chat_id.into(),
@@ -897,7 +901,7 @@ impl crate::BlockingClient {
 }
 
 #[cfg(feature = "async")]
-impl<'c> Chats<'c, crate::Client> {
+impl<'c> Chats<crate::BlooioAccount<'c>> {
     /// List chats (first page).
     pub async fn list(&self) -> Result<ListChatsResponse> {
         self.client.send(ListChats::default()).await
@@ -909,7 +913,8 @@ impl<'c> Chats<'c, crate::Client> {
     /// Paginate over all chats.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListChats + use<'c>, ListChats> {
+    ) -> Paginator<crate::BlooioAccount<'c>, impl Fn(u32, u32) -> ListChats + use<'c>, ListChats>
+    {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListChats {
             offset: Some(offset),
             limit: Some(limit),
@@ -919,7 +924,7 @@ impl<'c> Chats<'c, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl<'c> Chats<'c, crate::BlockingClient> {
+impl<'c> Chats<crate::BlockingBlooioAccount<'c>> {
     /// List chats (first page).
     pub fn list(&self) -> Result<ListChatsResponse> {
         self.client.send(ListChats::default())
@@ -931,8 +936,11 @@ impl<'c> Chats<'c, crate::BlockingClient> {
     /// Paginate over all chats.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListChats + use<'c>, ListChats>
-    {
+    ) -> Paginator<
+        crate::BlockingBlooioAccount<'c>,
+        impl Fn(u32, u32) -> ListChats + use<'c>,
+        ListChats,
+    > {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListChats {
             offset: Some(offset),
             limit: Some(limit),
@@ -942,7 +950,7 @@ impl<'c> Chats<'c, crate::BlockingClient> {
 }
 
 #[cfg(feature = "async")]
-impl<'c> Chat_<'c, crate::Client> {
+impl<'c> Chat_<crate::BlooioAccount<'c>> {
     /// Fetch this chat's detail.
     pub async fn get(&self) -> Result<Chat> {
         self.client
@@ -971,8 +979,7 @@ impl<'c> Chat_<'c, crate::Client> {
     pub fn list_messages_all(
         &self,
     ) -> Paginator<
-        'c,
-        crate::Client,
+        crate::BlooioAccount<'c>,
         impl Fn(u32, u32) -> ListChatMessages + use<'c>,
         ListChatMessages,
     > {
@@ -1133,7 +1140,7 @@ impl<'c> Chat_<'c, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl<'c> Chat_<'c, crate::BlockingClient> {
+impl<'c> Chat_<crate::BlockingBlooioAccount<'c>> {
     /// Fetch this chat's detail.
     pub fn get(&self) -> Result<Chat> {
         self.client.send(GetChat {
@@ -1156,8 +1163,7 @@ impl<'c> Chat_<'c, crate::BlockingClient> {
     pub fn list_messages_all(
         &self,
     ) -> Paginator<
-        'c,
-        crate::BlockingClient,
+        crate::BlockingBlooioAccount<'c>,
         impl Fn(u32, u32) -> ListChatMessages + use<'c>,
         ListChatMessages,
     > {

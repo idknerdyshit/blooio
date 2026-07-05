@@ -9,8 +9,9 @@ use crate::error::{Error, Result};
 /// is never duplicated between them.
 ///
 /// `Operation` types are public and can be passed directly to
-/// [`Client::send`](crate::Client::send) /
-/// [`BlockingClient::send`](crate::BlockingClient::send) as an escape hatch.
+/// [`BlooioAccount::send`](crate::BlooioAccount::send) /
+/// [`BlockingBlooioAccount::send`](crate::BlockingBlooioAccount::send) as an
+/// escape hatch.
 pub trait Operation {
     /// The type the response body deserializes into.
     type Output: serde::de::DeserializeOwned;

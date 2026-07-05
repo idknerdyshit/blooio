@@ -93,31 +93,32 @@ impl Operation for BatchLookupPhoneNumbers {
 // Resource handle + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `phone_numbers` resource group. Created via
-/// [`Client::phone_numbers`](crate::Client::phone_numbers).
+/// Handle for the `phone_numbers` resource group.
 #[derive(Debug)]
-pub struct PhoneNumbers<'c, C> {
-    pub(crate) client: &'c C,
+pub struct PhoneNumbers<C> {
+    pub(crate) client: C,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the `phone_numbers` resource group.
-    pub fn phone_numbers(&self) -> PhoneNumbers<'_, crate::Client> {
+    #[must_use]
+    pub fn phone_numbers(self) -> PhoneNumbers<crate::BlooioAccount<'a>> {
         PhoneNumbers { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the `phone_numbers` resource group.
-    pub fn phone_numbers(&self) -> PhoneNumbers<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn phone_numbers(self) -> PhoneNumbers<crate::BlockingBlooioAccount<'a>> {
         PhoneNumbers { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl PhoneNumbers<'_, crate::Client> {
+impl PhoneNumbers<crate::BlooioAccount<'_>> {
     /// Lookup a phone number via GET query parameter.
     pub async fn lookup(
         &self,
@@ -151,7 +152,7 @@ impl PhoneNumbers<'_, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl PhoneNumbers<'_, crate::BlockingClient> {
+impl PhoneNumbers<crate::BlockingBlooioAccount<'_>> {
     /// Lookup a phone number via GET query parameter.
     pub fn lookup(
         &self,

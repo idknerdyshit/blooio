@@ -23,8 +23,8 @@ use blooio::BlockingClient;
 use blooio::Client;
 use blooio::resources::chats::SendMessage;
 use blooio::{
-    ClientConfig, RequestOptions, RetryPolicy, SensitiveDiagnosticEvent, SensitiveDiagnostics,
-    SensitiveTransportErrorStage,
+    BlooioCreds, ClientConfig, RequestOptions, RetryPolicy, SensitiveDiagnosticEvent,
+    SensitiveDiagnostics, SensitiveTransportErrorStage,
 };
 
 const API_KEY: &str = "test-key-sensitive-diagnostics";
@@ -97,14 +97,14 @@ fn unused_base_url() -> String {
 }
 
 fn config(base_url: impl Into<String>, diagnostics: SensitiveDiagnostics) -> ClientConfig {
-    ClientConfig::new(API_KEY)
+    ClientConfig::new()
         .with_base_url(base_url)
         .with_retry(RetryPolicy::none())
         .with_sensitive_diagnostics(diagnostics)
 }
 
 fn retry_config(base_url: impl Into<String>, diagnostics: SensitiveDiagnostics) -> ClientConfig {
-    ClientConfig::new(API_KEY)
+    ClientConfig::new()
         .with_base_url(base_url)
         .with_retry(
             RetryPolicy::default()
@@ -113,6 +113,10 @@ fn retry_config(base_url: impl Into<String>, diagnostics: SensitiveDiagnostics) 
                 .with_jitter(false),
         )
         .with_sensitive_diagnostics(diagnostics)
+}
+
+fn test_creds() -> BlooioCreds {
+    BlooioCreds::new(API_KEY)
 }
 
 fn send_message_options(diagnostics: SensitiveDiagnostics) -> RequestOptions {
@@ -268,8 +272,9 @@ async fn async_client_default_sink_captures_request_and_response() {
     let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = Client::from_config(config(base_url.clone(), diagnostics)).unwrap();
+    let creds = test_creds();
 
-    let _me = client.account().get().await.unwrap();
+    let _me = client.account(&creds).me().get().await.unwrap();
 
     assert_basic_request_response(&captured(&events), &base_url);
 }
@@ -280,8 +285,9 @@ fn blocking_client_default_sink_captures_request_and_response() {
     let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = BlockingClient::from_config(config(base_url.clone(), diagnostics)).unwrap();
+    let creds = test_creds();
 
-    let _me = client.account().get().unwrap();
+    let _me = client.account(&creds).me().get().unwrap();
 
     assert_basic_request_response(&captured(&events), &base_url);
 }
@@ -297,8 +303,10 @@ async fn async_per_request_sink_overrides_client_default_and_captures_sensitive_
     let (client_diagnostics, client_events) = capture();
     let (request_diagnostics, request_events) = capture();
     let client = Client::from_config(config(base_url.clone(), client_diagnostics)).unwrap();
+    let creds = test_creds();
 
     let _sent = client
+        .account(&creds)
         .send_with_options(send_message(), send_message_options(request_diagnostics))
         .await
         .unwrap();
@@ -318,8 +326,10 @@ fn blocking_per_request_sink_overrides_client_default_and_captures_sensitive_dat
     let (client_diagnostics, client_events) = capture();
     let (request_diagnostics, request_events) = capture();
     let client = BlockingClient::from_config(config(base_url.clone(), client_diagnostics)).unwrap();
+    let creds = test_creds();
 
     let _sent = client
+        .account(&creds)
         .send_with_options(send_message(), send_message_options(request_diagnostics))
         .unwrap();
 
@@ -333,8 +343,10 @@ async fn async_noop_request_override_disables_client_default() {
     let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = Client::from_config(config(base_url, diagnostics)).unwrap();
+    let creds = test_creds();
 
     let _me = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::account::GetMe,
             RequestOptions::new().sensitive_diagnostics(SensitiveDiagnostics::noop()),
@@ -351,8 +363,10 @@ fn blocking_noop_request_override_disables_client_default() {
     let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = BlockingClient::from_config(config(base_url, diagnostics)).unwrap();
+    let creds = test_creds();
 
     let _me = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::account::GetMe,
             RequestOptions::new().sensitive_diagnostics(SensitiveDiagnostics::noop()),
@@ -368,8 +382,9 @@ async fn async_transport_failure_emits_raw_sensitive_event_but_returns_scrubbed_
     let base_url = unused_base_url();
     let (diagnostics, events) = capture();
     let client = Client::from_config(config(base_url, diagnostics)).unwrap();
+    let creds = test_creds();
 
-    let err = client.account().get().await.unwrap_err();
+    let err = client.account(&creds).me().get().await.unwrap_err();
 
     assert_transport_error_events(&captured(&events), &err);
 }
@@ -380,8 +395,9 @@ fn blocking_transport_failure_emits_raw_sensitive_event_but_returns_scrubbed_err
     let base_url = unused_base_url();
     let (diagnostics, events) = capture();
     let client = BlockingClient::from_config(config(base_url, diagnostics)).unwrap();
+    let creds = test_creds();
 
-    let err = client.account().get().unwrap_err();
+    let err = client.account(&creds).me().get().unwrap_err();
 
     assert_transport_error_events(&captured(&events), &err);
 }
@@ -392,8 +408,10 @@ async fn async_build_failure_emits_build_request_without_request_event() {
     let base_url = unused_base_url();
     let (diagnostics, events) = capture();
     let client = Client::from_config(config(base_url, diagnostics)).unwrap();
+    let creds = test_creds();
 
     let err = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::account::GetMe,
             RequestOptions::new().header("x-invalid", "bad-secret\nvalue"),
@@ -410,8 +428,10 @@ fn blocking_build_failure_emits_build_request_without_request_event() {
     let base_url = unused_base_url();
     let (diagnostics, events) = capture();
     let client = BlockingClient::from_config(config(base_url, diagnostics)).unwrap();
+    let creds = test_creds();
 
     let err = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::account::GetMe,
             RequestOptions::new().header("x-invalid", "bad-secret\nvalue"),
@@ -434,8 +454,9 @@ async fn async_retries_emit_request_and_response_for_each_attempt() {
     ]);
     let (diagnostics, events) = capture();
     let client = Client::from_config(retry_config(base_url.clone(), diagnostics)).unwrap();
+    let creds = test_creds();
 
-    let _me = client.account().get().await.unwrap();
+    let _me = client.account(&creds).me().get().await.unwrap();
 
     assert_retry_events(&captured(&events), &base_url);
 }
@@ -453,8 +474,9 @@ fn blocking_retries_emit_request_and_response_for_each_attempt() {
     ]);
     let (diagnostics, events) = capture();
     let client = BlockingClient::from_config(retry_config(base_url.clone(), diagnostics)).unwrap();
+    let creds = test_creds();
 
-    let _me = client.account().get().unwrap();
+    let _me = client.account(&creds).me().get().unwrap();
 
     assert_retry_events(&captured(&events), &base_url);
 }

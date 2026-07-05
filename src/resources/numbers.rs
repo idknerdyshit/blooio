@@ -97,31 +97,32 @@ impl Operation for RequestCallForwarding {
 // Resource handle + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `numbers` resource group. Created via
-/// [`Client::numbers`](crate::Client::numbers).
+/// Handle for the `numbers` resource group.
 #[derive(Debug)]
-pub struct Numbers<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Numbers<C> {
+    pub(crate) client: C,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the numbers resource group.
-    pub fn numbers(&self) -> Numbers<'_, crate::Client> {
+    #[must_use]
+    pub fn numbers(self) -> Numbers<crate::BlooioAccount<'a>> {
         Numbers { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the numbers resource group.
-    pub fn numbers(&self) -> Numbers<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn numbers(self) -> Numbers<crate::BlockingBlooioAccount<'a>> {
         Numbers { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl Numbers<'_, crate::Client> {
+impl Numbers<crate::BlooioAccount<'_>> {
     /// List all phone numbers on the account.
     pub async fn list(&self) -> Result<ListNumbersResponse> {
         self.client.send(ListNumbers).await
@@ -148,7 +149,7 @@ impl Numbers<'_, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl Numbers<'_, crate::BlockingClient> {
+impl Numbers<crate::BlockingBlooioAccount<'_>> {
     /// List all phone numbers on the account.
     pub fn list(&self) -> Result<ListNumbersResponse> {
         self.client.send(ListNumbers)

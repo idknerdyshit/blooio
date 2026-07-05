@@ -21,7 +21,7 @@ use std::time::Duration;
 use blooio::BlockingClient;
 #[cfg(feature = "async")]
 use blooio::Client;
-use blooio::{ClientConfig, RequestOptions, RetryPolicy};
+use blooio::{BlooioCreds, ClientConfig, RequestOptions, RetryPolicy};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
@@ -294,20 +294,22 @@ fn unused_base_url() -> String {
 }
 
 fn no_retry_config(base_url: impl Into<String>) -> ClientConfig {
-    ClientConfig::new(SECRET_KEY)
+    ClientConfig::new()
         .with_base_url(base_url)
         .with_retry(RetryPolicy::none())
 }
 
 fn one_retry_config(base_url: impl Into<String>) -> ClientConfig {
-    ClientConfig::new(SECRET_KEY)
-        .with_base_url(base_url)
-        .with_retry(
-            RetryPolicy::default()
-                .with_max_retries(1)
-                .with_base_delay(Duration::from_millis(0))
-                .with_jitter(false),
-        )
+    ClientConfig::new().with_base_url(base_url).with_retry(
+        RetryPolicy::default()
+            .with_max_retries(1)
+            .with_base_delay(Duration::from_millis(0))
+            .with_jitter(false),
+    )
+}
+
+fn test_creds() -> BlooioCreds {
+    BlooioCreds::new(SECRET_KEY)
 }
 
 fn assert_common_attempt(event: &CapturedEvent, method: &str, attempt: &str, max_retries: &str) {
@@ -484,7 +486,8 @@ async fn async_success_emits_attempt_and_operation_success() {
     let (capture, _guard) = capture_traces();
 
     let client = Client::from_config(no_retry_config(base_url.clone())).unwrap();
-    let _me = client.account().get().await.unwrap();
+    let creds = test_creds();
+    let _me = client.account(&creds).me().get().await.unwrap();
 
     assert_success_capture(&capture, "GET");
     assert_redacted(&capture, &[base_url.as_str()]);
@@ -497,7 +500,8 @@ fn blocking_success_emits_attempt_and_operation_success() {
     let (capture, _guard) = capture_traces();
 
     let client = BlockingClient::from_config(no_retry_config(base_url.clone())).unwrap();
-    let _me = client.account().get().unwrap();
+    let creds = test_creds();
+    let _me = client.account(&creds).me().get().unwrap();
 
     assert_success_capture(&capture, "GET");
     assert_redacted(&capture, &[base_url.as_str()]);
@@ -510,7 +514,9 @@ async fn async_trace_label_is_emitted_when_set() {
     let (capture, _guard) = capture_traces();
 
     let client = Client::from_config(no_retry_config(base_url.clone())).unwrap();
+    let creds = test_creds();
     let _me = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::account::GetMe,
             RequestOptions::new().trace_label(SAFE_TRACE_LABEL),
@@ -529,7 +535,9 @@ fn blocking_trace_label_is_emitted_when_set() {
     let (capture, _guard) = capture_traces();
 
     let client = BlockingClient::from_config(no_retry_config(base_url.clone())).unwrap();
+    let creds = test_creds();
     let _me = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::account::GetMe,
             RequestOptions::new().trace_label(SAFE_TRACE_LABEL),
@@ -551,7 +559,8 @@ async fn async_api_failure_emits_attempt_response_and_operation_failure() {
     let (capture, _guard) = capture_traces();
 
     let client = Client::from_config(no_retry_config(base_url.clone())).unwrap();
-    let _err = client.account().get().await.unwrap_err();
+    let creds = test_creds();
+    let _err = client.account(&creds).me().get().await.unwrap_err();
 
     assert_api_failure_capture(&capture);
     assert_redacted(&capture, &[base_url.as_str(), "contains sk-structured"]);
@@ -568,7 +577,8 @@ fn blocking_api_failure_emits_attempt_response_and_operation_failure() {
     let (capture, _guard) = capture_traces();
 
     let client = BlockingClient::from_config(no_retry_config(base_url.clone())).unwrap();
-    let _err = client.account().get().unwrap_err();
+    let creds = test_creds();
+    let _err = client.account(&creds).me().get().unwrap_err();
 
     assert_api_failure_capture(&capture);
     assert_redacted(&capture, &[base_url.as_str(), "contains sk-structured"]);
@@ -588,7 +598,8 @@ async fn async_retry_event_links_transient_failure_to_success() {
     let (capture, _guard) = capture_traces();
 
     let client = Client::from_config(one_retry_config(base_url.clone())).unwrap();
-    let _me = client.account().get().await.unwrap();
+    let creds = test_creds();
+    let _me = client.account(&creds).me().get().await.unwrap();
 
     assert_retry_success_capture(&capture);
     assert_redacted(&capture, &[base_url.as_str()]);
@@ -608,7 +619,8 @@ fn blocking_retry_event_links_transient_failure_to_success() {
     let (capture, _guard) = capture_traces();
 
     let client = BlockingClient::from_config(one_retry_config(base_url.clone())).unwrap();
-    let _me = client.account().get().unwrap();
+    let creds = test_creds();
+    let _me = client.account(&creds).me().get().unwrap();
 
     assert_retry_success_capture(&capture);
     assert_redacted(&capture, &[base_url.as_str()]);
@@ -621,7 +633,9 @@ async fn async_transport_failure_is_redacted_and_structured() {
     let (capture, _guard) = capture_traces();
 
     let client = Client::from_config(one_retry_config(base_url.clone())).unwrap();
+    let creds = test_creds();
     let _err = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::chats::SendMessage::new(SENSITIVE_CHAT_ID).text(SENSITIVE_BODY),
             blooio::RequestOptions::new()
@@ -642,7 +656,9 @@ fn blocking_transport_failure_is_redacted_and_structured() {
     let (capture, _guard) = capture_traces();
 
     let client = BlockingClient::from_config(one_retry_config(base_url.clone())).unwrap();
+    let creds = test_creds();
     let _err = client
+        .account(&creds)
         .send_with_options(
             blooio::resources::chats::SendMessage::new(SENSITIVE_CHAT_ID).text(SENSITIVE_BODY),
             blooio::RequestOptions::new()

@@ -80,7 +80,7 @@ pub struct AddTagsResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Operations (public escape hatch — usable via `client.send(..)`).
+// Operations (public escape hatch — usable via `account.send(..)`).
 // ---------------------------------------------------------------------------
 
 /// `GET /contacts`
@@ -300,31 +300,32 @@ impl Operation for RemoveContactTag {
 // Resource handle + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `contacts` resource group. Created via
-/// [`Client::contacts`](crate::Client::contacts).
+/// Handle for the `contacts` resource group.
 #[derive(Debug)]
-pub struct Contacts<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Contacts<C> {
+    pub(crate) client: C,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the contacts resource group.
-    pub fn contacts(&self) -> Contacts<'_, crate::Client> {
+    #[must_use]
+    pub fn contacts(self) -> Contacts<crate::BlooioAccount<'a>> {
         Contacts { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the contacts resource group.
-    pub fn contacts(&self) -> Contacts<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn contacts(self) -> Contacts<crate::BlockingBlooioAccount<'a>> {
         Contacts { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl<'c> Contacts<'c, crate::Client> {
+impl<'c> Contacts<crate::BlooioAccount<'c>> {
     /// List contacts (first page, no filters).
     pub async fn list(&self) -> Result<ListContactsResponse> {
         self.client.send(ListContacts::default()).await
@@ -338,8 +339,11 @@ impl<'c> Contacts<'c, crate::Client> {
     /// A paginator over all contacts.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListContacts + use<'c>, ListContacts>
-    {
+    ) -> Paginator<
+        crate::BlooioAccount<'c>,
+        impl Fn(u32, u32) -> ListContacts + use<'c>,
+        ListContacts,
+    > {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| {
             ListContacts {
                 offset: Some(offset),
@@ -431,7 +435,7 @@ impl<'c> Contacts<'c, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl<'c> Contacts<'c, crate::BlockingClient> {
+impl<'c> Contacts<crate::BlockingBlooioAccount<'c>> {
     /// List contacts (first page, no filters).
     pub fn list(&self) -> Result<ListContactsResponse> {
         self.client.send(ListContacts::default())
@@ -446,8 +450,7 @@ impl<'c> Contacts<'c, crate::BlockingClient> {
     pub fn list_all(
         &self,
     ) -> Paginator<
-        'c,
-        crate::BlockingClient,
+        crate::BlockingBlooioAccount<'c>,
         impl Fn(u32, u32) -> ListContacts + use<'c>,
         ListContacts,
     > {

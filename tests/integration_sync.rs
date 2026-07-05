@@ -12,15 +12,96 @@
 use std::time::Duration;
 
 use blooio::error::codes;
-use blooio::resources::contacts::CreateContact;
+use blooio::resources::account::Me;
+use blooio::resources::chats::Chat_;
+use blooio::resources::contacts::{Contacts, CreateContact};
 use blooio::resources::groups::CreateGroup;
-use blooio::resources::webhooks::CreateWebhook;
-use blooio::{BlockingClient, ClientConfig, Operation, RequestOptions, RetryPolicy};
+use blooio::resources::groups::Groups;
+use blooio::resources::location::Location;
+use blooio::resources::numbers::Numbers;
+use blooio::resources::phone_numbers::PhoneNumbers;
+use blooio::resources::webhooks::{CreateWebhook, Webhooks};
+use blooio::{
+    ApiResponse, BlockingBlooioAccount, BlockingClient, BlooioCreds, ClientConfig, Operation,
+    RequestOptions, ResponseMeta, RetryPolicy,
+};
 use httpmock::prelude::*;
 
-fn client(server: &MockServer) -> BlockingClient {
-    BlockingClient::from_config(ClientConfig::new("test-key").with_base_url(server.base_url()))
-        .unwrap()
+fn client(server: &MockServer) -> TestBlockingClient {
+    TestBlockingClient::new(
+        BlockingClient::from_config(ClientConfig::new().with_base_url(server.base_url())).unwrap(),
+    )
+}
+
+#[derive(Debug)]
+struct TestBlockingClient {
+    client: BlockingClient,
+    creds: BlooioCreds,
+}
+
+impl TestBlockingClient {
+    fn new(client: BlockingClient) -> Self {
+        Self {
+            client,
+            creds: BlooioCreds::new("test-key"),
+        }
+    }
+
+    fn account(&self) -> BlockingBlooioAccount<'_> {
+        self.client.account(&self.creds)
+    }
+
+    fn me(&self) -> Me<BlockingBlooioAccount<'_>> {
+        self.account().me()
+    }
+
+    fn contacts(&self) -> Contacts<BlockingBlooioAccount<'_>> {
+        self.account().contacts()
+    }
+
+    fn chat(&self, chat_id: impl Into<String>) -> Chat_<BlockingBlooioAccount<'_>> {
+        self.account().chat(chat_id)
+    }
+
+    fn groups(&self) -> Groups<BlockingBlooioAccount<'_>> {
+        self.account().groups()
+    }
+
+    fn webhooks(&self) -> Webhooks<BlockingBlooioAccount<'_>> {
+        self.account().webhooks()
+    }
+
+    fn location(&self) -> Location<BlockingBlooioAccount<'_>> {
+        self.account().location()
+    }
+
+    fn numbers(&self) -> Numbers<BlockingBlooioAccount<'_>> {
+        self.account().numbers()
+    }
+
+    fn phone_numbers(&self) -> PhoneNumbers<BlockingBlooioAccount<'_>> {
+        self.account().phone_numbers()
+    }
+
+    fn send<O: Operation>(&self, op: O) -> blooio::Result<O::Output> {
+        self.account().send(op)
+    }
+
+    fn send_with_options<O: Operation>(
+        &self,
+        op: O,
+        options: RequestOptions,
+    ) -> blooio::Result<O::Output> {
+        self.account().send_with_options(op, options)
+    }
+
+    fn send_with_response<O: Operation>(&self, op: O) -> blooio::Result<ApiResponse<O::Output>> {
+        self.account().send_with_response(op)
+    }
+
+    fn send_with_meta<O: Operation>(&self, op: O) -> blooio::Result<(O::Output, ResponseMeta)> {
+        self.account().send_with_meta(op)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -44,17 +125,19 @@ fn retries_transient_5xx_until_budget_exhausted() {
         then.status(503).header("retry-after", "0");
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.base_url())
-            .with_retry(
-                RetryPolicy::default()
-                    .with_max_retries(2)
-                    .with_base_delay(Duration::from_millis(1))
-                    .with_jitter(false),
-            ),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(server.base_url())
+                .with_retry(
+                    RetryPolicy::default()
+                        .with_max_retries(2)
+                        .with_base_delay(Duration::from_millis(1))
+                        .with_jitter(false),
+                ),
+        )
+        .unwrap(),
+    );
 
     let err = client
         .contacts()
@@ -79,17 +162,19 @@ fn retries_unknown_429_code_until_budget_exhausted() {
             }));
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.base_url())
-            .with_retry(
-                RetryPolicy::default()
-                    .with_max_retries(1)
-                    .with_base_delay(Duration::from_millis(1))
-                    .with_jitter(false),
-            ),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(server.base_url())
+                .with_retry(
+                    RetryPolicy::default()
+                        .with_max_retries(1)
+                        .with_base_delay(Duration::from_millis(1))
+                        .with_jitter(false),
+                ),
+        )
+        .unwrap(),
+    );
 
     let err = client
         .contacts()
@@ -117,17 +202,19 @@ fn does_not_retry_documented_quota_429() {
             }));
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.base_url())
-            .with_retry(
-                RetryPolicy::default()
-                    .with_max_retries(2)
-                    .with_base_delay(Duration::from_millis(1))
-                    .with_jitter(false),
-            ),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(server.base_url())
+                .with_retry(
+                    RetryPolicy::default()
+                        .with_max_retries(2)
+                        .with_base_delay(Duration::from_millis(1))
+                        .with_jitter(false),
+                ),
+        )
+        .unwrap(),
+    );
 
     let err = client
         .contacts()
@@ -157,12 +244,14 @@ fn does_not_retry_when_policy_is_none() {
         then.status(503);
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.base_url())
-            .with_retry(RetryPolicy::none()),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(server.base_url())
+                .with_retry(RetryPolicy::none()),
+        )
+        .unwrap(),
+    );
 
     let err = client
         .contacts()
@@ -183,9 +272,41 @@ fn get_sends_bearer_auth() {
             .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
     });
 
-    let me = client(&server).account().get().unwrap();
+    let me = client(&server).me().get().unwrap();
     m.assert();
     assert_eq!(me.user_id.as_deref(), Some("u1"));
+}
+
+#[test]
+fn one_root_client_can_use_multiple_account_credentials() {
+    let server = MockServer::start();
+    let first_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/me")
+            .header("Authorization", "Bearer key-one");
+        then.status(200)
+            .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
+    });
+    let second_mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/me")
+            .header("Authorization", "Bearer key-two");
+        then.status(200)
+            .json_body(serde_json::json!({ "valid": true, "user_id": "u2" }));
+    });
+
+    let client =
+        BlockingClient::from_config(ClientConfig::new().with_base_url(server.base_url())).unwrap();
+    let one = BlooioCreds::new("key-one");
+    let two = BlooioCreds::new("key-two");
+
+    let first = client.account(&one).me().get().unwrap();
+    let second = client.account(&two).me().get().unwrap();
+
+    first_mock.assert();
+    second_mock.assert();
+    assert_eq!(first.user_id.as_deref(), Some("u1"));
+    assert_eq!(second.user_id.as_deref(), Some("u2"));
 }
 
 #[test]
@@ -285,12 +406,14 @@ fn request_options_base_url_overrides_url_only() {
             .json_body(serde_json::json!({ "valid": true, "user_id": "client" }));
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(client_server.base_url())
-            .with_retry(RetryPolicy::none()),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(client_server.base_url())
+                .with_retry(RetryPolicy::none()),
+        )
+        .unwrap(),
+    );
     let err = client
         .send_with_options(
             blooio::resources::account::GetMe,
@@ -306,9 +429,9 @@ fn request_options_base_url_overrides_url_only() {
         .unwrap_err();
     assert_eq!(err.status(), Some(503));
     override_mock.assert_calls(2);
-    assert_eq!(client.config().base_url, client_server.base_url());
+    assert_eq!(client.client.config().base_url, client_server.base_url());
 
-    let response = client.account().get().unwrap();
+    let response = client.me().get().unwrap();
     client_mock.assert();
     assert_eq!(response.user_id.as_deref(), Some("client"));
 }
@@ -321,12 +444,14 @@ fn request_options_retry_override_retries_transient_error() {
         then.status(503).header("retry-after", "0");
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.base_url())
-            .with_retry(RetryPolicy::none()),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(server.base_url())
+                .with_retry(RetryPolicy::none()),
+        )
+        .unwrap(),
+    );
     let err = client
         .send_with_options(
             blooio::resources::account::GetMe,
@@ -373,17 +498,19 @@ fn generated_idempotency_key_is_sent_across_retries() {
         then.status(503).header("retry-after", "0");
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.base_url())
-            .with_retry(
-                RetryPolicy::default()
-                    .with_max_retries(1)
-                    .with_base_delay(Duration::from_millis(1))
-                    .with_jitter(false),
-            ),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(server.base_url())
+                .with_retry(
+                    RetryPolicy::default()
+                        .with_max_retries(1)
+                        .with_base_delay(Duration::from_millis(1))
+                        .with_jitter(false),
+                ),
+        )
+        .unwrap(),
+    );
     let err = client
         .contacts()
         .create(CreateContact::new("+15550001111"))
@@ -551,7 +678,7 @@ fn malformed_body_maps_to_decode_error() {
         then.status(200).body("not json");
     });
 
-    let err = client(&server).account().get().unwrap_err();
+    let err = client(&server).me().get().unwrap_err();
     assert!(matches!(err, blooio::Error::Decode(_)));
     let message = err.to_string();
     assert!(message.contains("MeResponse"));
@@ -565,14 +692,16 @@ fn malformed_body_maps_to_decode_error() {
 
 #[test]
 fn connection_refused_maps_to_transport_error() {
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url("http://127.0.0.1:1")
-            .with_timeout(std::time::Duration::from_secs(2)),
-    )
-    .unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url("http://127.0.0.1:1")
+                .with_timeout(std::time::Duration::from_secs(2)),
+        )
+        .unwrap(),
+    );
 
-    let err = client.account().get().unwrap_err();
+    let err = client.me().get().unwrap_err();
     assert!(matches!(err, blooio::Error::Transport(_)));
     assert!(!err.to_string().contains("127.0.0.1:1"));
     assert_eq!(err.code(), None);
@@ -935,13 +1064,15 @@ fn custom_user_agent_is_sent() {
             .json_body(serde_json::json!({ "valid": true, "user_id": "u1" }));
     });
 
-    let client = BlockingClient::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.base_url())
-            .with_user_agent("my-app/9.9"),
-    )
-    .unwrap();
-    client.account().get().unwrap();
+    let client = TestBlockingClient::new(
+        BlockingClient::from_config(
+            ClientConfig::new()
+                .with_base_url(server.base_url())
+                .with_user_agent("my-app/9.9"),
+        )
+        .unwrap(),
+    );
+    client.me().get().unwrap();
     m.assert();
 }
 

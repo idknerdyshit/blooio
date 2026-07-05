@@ -75,31 +75,32 @@ impl Operation for RefreshLocationContacts {
 // Resource handle + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `location` resource group. Created via
-/// [`Client::location`](crate::Client::location).
+/// Handle for the `location` resource group.
 #[derive(Debug)]
-pub struct Location<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Location<C> {
+    pub(crate) client: C,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the location resource group.
-    pub fn location(&self) -> Location<'_, crate::Client> {
+    #[must_use]
+    pub fn location(self) -> Location<crate::BlooioAccount<'a>> {
         Location { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the location resource group.
-    pub fn location(&self) -> Location<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn location(self) -> Location<crate::BlockingBlooioAccount<'a>> {
         Location { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl Location<'_, crate::Client> {
+impl Location<crate::BlooioAccount<'_>> {
     /// List all location-sharing contacts.
     pub async fn list(&self) -> Result<LocationContactsResponse> {
         self.client.send(ListLocationContacts).await
@@ -121,7 +122,7 @@ impl Location<'_, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl Location<'_, crate::BlockingClient> {
+impl Location<crate::BlockingBlooioAccount<'_>> {
     /// List all location-sharing contacts.
     pub fn list(&self) -> Result<LocationContactsResponse> {
         self.client.send(ListLocationContacts)

@@ -21,10 +21,14 @@ use blooio::Client;
 #[tokio::test]
 #[ignore = "requires a live BLOOIO_API_KEY and network access"]
 async fn account_get_smoke() {
-    let key =
-        std::env::var("BLOOIO_API_KEY").expect("set BLOOIO_API_KEY to run the live smoke test");
-    let client = Client::new(key).unwrap();
-    let me = client.account().get().await.expect("GET /me failed");
+    let client = Client::new().unwrap();
+    let creds = blooio::BlooioCreds::from_env().expect("set BLOOIO_API_KEY to run live smoke test");
+    let me = client
+        .account(&creds)
+        .me()
+        .get()
+        .await
+        .expect("GET /me failed");
     println!(
         "authenticated: valid={:?} user_id={:?}",
         me.valid, me.user_id

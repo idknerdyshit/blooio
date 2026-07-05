@@ -18,31 +18,115 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use blooio::error::codes;
+use blooio::resources::account::Me;
+use blooio::resources::chats::Chat_;
+use blooio::resources::contacts::Contacts;
 use blooio::resources::contacts::CreateContact;
 use blooio::resources::groups::CreateGroup;
+use blooio::resources::groups::Groups;
+use blooio::resources::location::Location;
+use blooio::resources::numbers::Numbers;
+use blooio::resources::phone_numbers::PhoneNumbers;
 use blooio::resources::webhooks::CreateWebhook;
-use blooio::{Client, ClientConfig, RequestOptions, RetryPolicy};
+use blooio::resources::webhooks::Webhooks;
+use blooio::{
+    ApiResponse, BlooioAccount, BlooioCreds, Client, ClientConfig, Operation, RequestOptions,
+    ResponseMeta, RetryPolicy,
+};
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
 use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 /// A client with fast, deterministic retries for exercising the retry loop
 /// without slowing the test suite.
-fn retrying_client(server: &MockServer, max_retries: u32) -> Client {
-    Client::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.uri())
-            .with_retry(
+fn retrying_client(server: &MockServer, max_retries: u32) -> TestClient {
+    TestClient::new(
+        Client::from_config(
+            ClientConfig::new().with_base_url(server.uri()).with_retry(
                 RetryPolicy::default()
                     .with_max_retries(max_retries)
                     .with_base_delay(Duration::from_millis(1))
                     .with_jitter(false),
             ),
+        )
+        .unwrap(),
     )
-    .unwrap()
 }
 
-async fn client(server: &MockServer) -> Client {
-    Client::from_config(ClientConfig::new("test-key").with_base_url(server.uri())).unwrap()
+async fn client(server: &MockServer) -> TestClient {
+    TestClient::new(Client::from_config(ClientConfig::new().with_base_url(server.uri())).unwrap())
+}
+
+#[derive(Debug)]
+struct TestClient {
+    client: Client,
+    creds: BlooioCreds,
+}
+
+impl TestClient {
+    fn new(client: Client) -> Self {
+        Self {
+            client,
+            creds: BlooioCreds::new("test-key"),
+        }
+    }
+
+    fn account(&self) -> BlooioAccount<'_> {
+        self.client.account(&self.creds)
+    }
+
+    fn me(&self) -> Me<BlooioAccount<'_>> {
+        self.account().me()
+    }
+
+    fn contacts(&self) -> Contacts<BlooioAccount<'_>> {
+        self.account().contacts()
+    }
+
+    fn chat(&self, chat_id: impl Into<String>) -> Chat_<BlooioAccount<'_>> {
+        self.account().chat(chat_id)
+    }
+
+    fn groups(&self) -> Groups<BlooioAccount<'_>> {
+        self.account().groups()
+    }
+
+    fn webhooks(&self) -> Webhooks<BlooioAccount<'_>> {
+        self.account().webhooks()
+    }
+
+    fn location(&self) -> Location<BlooioAccount<'_>> {
+        self.account().location()
+    }
+
+    fn numbers(&self) -> Numbers<BlooioAccount<'_>> {
+        self.account().numbers()
+    }
+
+    fn phone_numbers(&self) -> PhoneNumbers<BlooioAccount<'_>> {
+        self.account().phone_numbers()
+    }
+
+    async fn send_with_options<O: Operation>(
+        &self,
+        op: O,
+        options: RequestOptions,
+    ) -> blooio::Result<O::Output> {
+        self.account().send_with_options(op, options).await
+    }
+
+    async fn send_with_response<O: Operation>(
+        &self,
+        op: O,
+    ) -> blooio::Result<ApiResponse<O::Output>> {
+        self.account().send_with_response(op).await
+    }
+
+    async fn send_with_meta<O: Operation>(
+        &self,
+        op: O,
+    ) -> blooio::Result<(O::Output, ResponseMeta)> {
+        self.account().send_with_meta(op).await
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -77,9 +161,44 @@ async fn get_sends_bearer_auth() {
         .mount(&server)
         .await;
 
-    let me = client(&server).await.account().get().await.unwrap();
+    let me = client(&server).await.me().get().await.unwrap();
     assert_eq!(me.user_id.as_deref(), Some("u1"));
     assert_eq!(me.valid, Some(true));
+}
+
+#[tokio::test]
+async fn one_root_client_can_use_multiple_account_credentials() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer key-one"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "valid": true,
+            "user_id": "u1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer key-two"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "valid": true,
+            "user_id": "u2"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::from_config(ClientConfig::new().with_base_url(server.uri())).unwrap();
+    let one = BlooioCreds::new("key-one");
+    let two = BlooioCreds::new("key-two");
+
+    let first = client.account(&one).me().get().await.unwrap();
+    let second = client.account(&two).me().get().await.unwrap();
+
+    assert_eq!(first.user_id.as_deref(), Some("u1"));
+    assert_eq!(second.user_id.as_deref(), Some("u2"));
 }
 
 #[tokio::test]
@@ -228,12 +347,14 @@ async fn request_options_base_url_overrides_url_only() {
         .mount(&client_server)
         .await;
 
-    let client = Client::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(client_server.uri())
-            .with_retry(RetryPolicy::none()),
-    )
-    .unwrap();
+    let client = TestClient::new(
+        Client::from_config(
+            ClientConfig::new()
+                .with_base_url(client_server.uri())
+                .with_retry(RetryPolicy::none()),
+        )
+        .unwrap(),
+    );
     let response = client
         .send_with_options(
             blooio::resources::account::GetMe,
@@ -249,9 +370,9 @@ async fn request_options_base_url_overrides_url_only() {
         .await
         .unwrap();
     assert_eq!(response.user_id.as_deref(), Some("override"));
-    assert_eq!(client.config().base_url, client_server.uri());
+    assert_eq!(client.client.config().base_url, client_server.uri());
 
-    let response = client.account().get().await.unwrap();
+    let response = client.me().get().await.unwrap();
     assert_eq!(response.user_id.as_deref(), Some("client"));
 }
 
@@ -277,12 +398,14 @@ async fn request_options_retry_override_retries_transient_error() {
         .mount(&server)
         .await;
 
-    let client = Client::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.uri())
-            .with_retry(RetryPolicy::none()),
-    )
-    .unwrap();
+    let client = TestClient::new(
+        Client::from_config(
+            ClientConfig::new()
+                .with_base_url(server.uri())
+                .with_retry(RetryPolicy::none()),
+        )
+        .unwrap(),
+    );
     let contact = client
         .send_with_options(
             CreateContact::new("+15550001111").name("Alice"),
@@ -545,7 +668,7 @@ async fn malformed_body_maps_to_decode_error() {
         .mount(&server)
         .await;
 
-    let err = client(&server).await.account().get().await.unwrap_err();
+    let err = client(&server).await.me().get().await.unwrap_err();
     assert!(matches!(err, blooio::Error::Decode(_)));
     let message = err.to_string();
     assert!(message.contains("MeResponse"));
@@ -561,14 +684,16 @@ async fn malformed_body_maps_to_decode_error() {
 #[tokio::test]
 async fn connection_refused_maps_to_transport_error() {
     // Port 1 is reserved and refuses connections immediately on localhost.
-    let client = Client::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url("http://127.0.0.1:1")
-            .with_timeout(std::time::Duration::from_secs(2)),
-    )
-    .unwrap();
+    let client = TestClient::new(
+        Client::from_config(
+            ClientConfig::new()
+                .with_base_url("http://127.0.0.1:1")
+                .with_timeout(std::time::Duration::from_secs(2)),
+        )
+        .unwrap(),
+    );
 
-    let err = client.account().get().await.unwrap_err();
+    let err = client.me().get().await.unwrap_err();
     assert!(matches!(err, blooio::Error::Transport(_)));
     assert!(!err.to_string().contains("127.0.0.1:1"));
     assert_eq!(err.code(), None);
@@ -1000,15 +1125,17 @@ async fn custom_user_agent_is_sent() {
         .mount(&server)
         .await;
 
-    let client = Client::from_config(
-        ClientConfig::new("test-key")
-            .with_base_url(server.uri())
-            .with_user_agent("my-app/9.9"),
-    )
-    .unwrap();
+    let client = TestClient::new(
+        Client::from_config(
+            ClientConfig::new()
+                .with_base_url(server.uri())
+                .with_user_agent("my-app/9.9"),
+        )
+        .unwrap(),
+    );
     // The mock only matches when the User-Agent header is correct; a mismatch
     // would return 404 and make this call fail.
-    client.account().get().await.unwrap();
+    client.me().get().await.unwrap();
 }
 
 #[tokio::test]

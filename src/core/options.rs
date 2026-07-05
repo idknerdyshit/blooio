@@ -219,7 +219,7 @@ mod tests {
     fn base_url_trims_trailing_slashes() {
         let options = RequestOptions::new().base_url("https://example.com/v2/api///");
         assert_eq!(
-            options.url_for(&ClientConfig::new("k"), "/me"),
+            options.url_for(&ClientConfig::new(), "/me"),
             "https://example.com/v2/api/me"
         );
     }

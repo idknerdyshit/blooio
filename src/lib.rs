@@ -16,24 +16,27 @@
 //! ```no_run
 //! # #[cfg(feature = "async")]
 //! # async fn demo() -> blooio::Result<()> {
-//! use blooio::Client;
+//! use blooio::{BlooioCreds, Client};
 //!
-//! let client = Client::new("my-api-key")?;
-//! let me = client.account().get().await?;
-//! let chat = client.chat("chat-id");
+//! let client = Client::new()?;
+//! let creds = BlooioCreds::new("my-api-key");
+//! let account = client.account(&creds);
+//! let me = account.me().get().await?;
+//! let chat = account.chat("chat-id");
 //! chat.send_text("hello from rust").await?;
 //! # Ok(()) }
 //! ```
 //!
 //! The [`Operation`] types are public, so anything not covered by a convenience
-//! method can be sent directly: `client.send(op).await`.
+//! method can be sent directly: `account.send(op).await`.
 //!
 //! ## Client reuse
 //!
-//! Construct one client per API key/base URL and reuse it for the lifetime of
-//! that configuration. The async [`Client`] wraps a pooled [`reqwest::Client`],
-//! and the blocking [`BlockingClient`] wraps a pooled `ureq::Agent`; cloning a
-//! Blooio client is cheap and shares the underlying transport state.
+//! Construct one client per base URL/transport configuration and reuse it
+//! across account-scoped API handles. The async [`Client`] wraps a pooled
+//! [`reqwest::Client`], and the blocking [`BlockingClient`] wraps a pooled
+//! `ureq::Agent`; cloning a Blooio client is cheap and shares the underlying
+//! transport state.
 //!
 //! Avoid creating a new client for each request in hot paths, because that
 //! defeats connection reuse. Applications that already own a configured
@@ -74,7 +77,7 @@
 //! timeout, override the base URL, append query parameters, and add extra
 //! headers. They can also attach a caller-provided safe trace label for
 //! correlation in this crate's structured tracing. `Authorization` is still
-//! injected by the executor from the redacted client secret.
+//! injected by the executor from the redacted account-scoped credentials.
 //!
 //! Use `send_with_response` when you need [`ApiResponse`], which combines the
 //! decoded output, [`ResponseMeta`], and a [`RawResponse`] containing status,
@@ -96,6 +99,8 @@ pub mod types;
 pub mod config;
 #[cfg(any(feature = "async", feature = "sync"))]
 pub mod core;
+#[cfg(any(feature = "async", feature = "sync"))]
+mod credentials;
 #[cfg(any(feature = "async", feature = "sync"))]
 pub mod resources;
 
@@ -121,11 +126,13 @@ pub use core::{
     SensitiveDiagnosticsBuilder, SensitiveRequestSnapshot, SensitiveResponseSnapshot,
     SensitiveTransportErrorSnapshot, SensitiveTransportErrorStage,
 };
+#[cfg(any(feature = "async", feature = "sync"))]
+pub use credentials::BlooioCreds;
 pub use error::{ApiError, ApiErrorDetails, Error, Result};
 pub use secret::Secret;
 pub use types::*;
 
 #[cfg(feature = "sync")]
-pub use client::BlockingClient;
+pub use client::{BlockingBlooioAccount, BlockingClient};
 #[cfg(feature = "async")]
-pub use client::Client;
+pub use client::{BlooioAccount, Client};

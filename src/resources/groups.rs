@@ -73,7 +73,7 @@ pub struct RemoveGroupMemberResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Operations (public escape hatch — usable via `client.send(..)`).
+// Operations (public escape hatch — usable via `account.send(..)`).
 // ---------------------------------------------------------------------------
 
 /// `GET /groups`
@@ -323,39 +323,40 @@ impl Operation for RemoveGroupMember {
 // Resource handles + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `groups` resource group. Created via
-/// [`Client::groups`](crate::Client::groups).
+/// Handle for the `groups` resource group.
 #[derive(Debug)]
-pub struct Groups<'c, C> {
-    pub(crate) client: &'c C,
+pub struct Groups<C> {
+    pub(crate) client: C,
 }
 
 /// Handle for the `groups/{groupId}/members` sub-resource. Created via
 /// [`Groups::members`].
 #[derive(Debug)]
-pub struct GroupMembers<'c, C> {
-    pub(crate) client: &'c C,
+pub struct GroupMembers<C> {
+    pub(crate) client: C,
     pub(crate) group_id: String,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the groups resource group.
-    pub fn groups(&self) -> Groups<'_, crate::Client> {
+    #[must_use]
+    pub fn groups(self) -> Groups<crate::BlooioAccount<'a>> {
         Groups { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the groups resource group.
-    pub fn groups(&self) -> Groups<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn groups(self) -> Groups<crate::BlockingBlooioAccount<'a>> {
         Groups { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl<'c> Groups<'c, crate::Client> {
+impl<'c> Groups<crate::BlooioAccount<'c>> {
     /// List groups (first page, no filters).
     pub async fn list(&self) -> Result<ListGroupsResponse> {
         self.client.send(ListGroups::default()).await
@@ -369,7 +370,8 @@ impl<'c> Groups<'c, crate::Client> {
     /// A paginator over all groups.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::Client, impl Fn(u32, u32) -> ListGroups + use<'c>, ListGroups> {
+    ) -> Paginator<crate::BlooioAccount<'c>, impl Fn(u32, u32) -> ListGroups + use<'c>, ListGroups>
+    {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListGroups {
             offset: Some(offset),
             limit: Some(limit),
@@ -434,7 +436,7 @@ impl<'c> Groups<'c, crate::Client> {
     }
 
     /// Access the members sub-resource for a group.
-    pub fn members(&self, group_id: impl Into<String>) -> GroupMembers<'c, crate::Client> {
+    pub fn members(&self, group_id: impl Into<String>) -> GroupMembers<crate::BlooioAccount<'c>> {
         GroupMembers {
             client: self.client,
             group_id: group_id.into(),
@@ -443,7 +445,7 @@ impl<'c> Groups<'c, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl<'c> Groups<'c, crate::BlockingClient> {
+impl<'c> Groups<crate::BlockingBlooioAccount<'c>> {
     /// List groups (first page, no filters).
     pub fn list(&self) -> Result<ListGroupsResponse> {
         self.client.send(ListGroups::default())
@@ -457,8 +459,11 @@ impl<'c> Groups<'c, crate::BlockingClient> {
     /// A paginator over all groups.
     pub fn list_all(
         &self,
-    ) -> Paginator<'c, crate::BlockingClient, impl Fn(u32, u32) -> ListGroups + use<'c>, ListGroups>
-    {
+    ) -> Paginator<
+        crate::BlockingBlooioAccount<'c>,
+        impl Fn(u32, u32) -> ListGroups + use<'c>,
+        ListGroups,
+    > {
         Paginator::new(self.client, DEFAULT_PAGE_SIZE, |offset, limit| ListGroups {
             offset: Some(offset),
             limit: Some(limit),
@@ -513,7 +518,10 @@ impl<'c> Groups<'c, crate::BlockingClient> {
     }
 
     /// Access the members sub-resource for a group.
-    pub fn members(&self, group_id: impl Into<String>) -> GroupMembers<'c, crate::BlockingClient> {
+    pub fn members(
+        &self,
+        group_id: impl Into<String>,
+    ) -> GroupMembers<crate::BlockingBlooioAccount<'c>> {
         GroupMembers {
             client: self.client,
             group_id: group_id.into(),
@@ -522,7 +530,7 @@ impl<'c> Groups<'c, crate::BlockingClient> {
 }
 
 #[cfg(feature = "async")]
-impl<'c> GroupMembers<'c, crate::Client> {
+impl<'c> GroupMembers<crate::BlooioAccount<'c>> {
     /// List members of this group (first page).
     pub async fn list(&self) -> Result<ListGroupMembersResponse> {
         self.client
@@ -538,8 +546,7 @@ impl<'c> GroupMembers<'c, crate::Client> {
     pub fn list_all(
         &self,
     ) -> Paginator<
-        'c,
-        crate::Client,
+        crate::BlooioAccount<'c>,
         impl Fn(u32, u32) -> ListGroupMembers + use<'c>,
         ListGroupMembers,
     > {
@@ -575,7 +582,7 @@ impl<'c> GroupMembers<'c, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl<'c> GroupMembers<'c, crate::BlockingClient> {
+impl<'c> GroupMembers<crate::BlockingBlooioAccount<'c>> {
     /// List members of this group (first page).
     pub fn list(&self) -> Result<ListGroupMembersResponse> {
         self.client.send(ListGroupMembers {
@@ -589,8 +596,7 @@ impl<'c> GroupMembers<'c, crate::BlockingClient> {
     pub fn list_all(
         &self,
     ) -> Paginator<
-        'c,
-        crate::BlockingClient,
+        crate::BlockingBlooioAccount<'c>,
         impl Fn(u32, u32) -> ListGroupMembers + use<'c>,
         ListGroupMembers,
     > {

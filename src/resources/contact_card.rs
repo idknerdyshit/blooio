@@ -157,31 +157,32 @@ impl Operation for UpdateMyContactCard {
 // Resource handle + accessors.
 // ---------------------------------------------------------------------------
 
-/// Handle for the `contact_card` resource group. Created via
-/// [`Client::contact_card`](crate::Client::contact_card).
+/// Handle for the `contact_card` resource group.
 #[derive(Debug)]
-pub struct ContactCard<'c, C> {
-    pub(crate) client: &'c C,
+pub struct ContactCard<C> {
+    pub(crate) client: C,
 }
 
 #[cfg(feature = "async")]
-impl crate::Client {
+impl<'a> crate::BlooioAccount<'a> {
     /// Access the `contact_card` resource group.
-    pub fn contact_card(&self) -> ContactCard<'_, crate::Client> {
+    #[must_use]
+    pub fn contact_card(self) -> ContactCard<crate::BlooioAccount<'a>> {
         ContactCard { client: self }
     }
 }
 
 #[cfg(feature = "sync")]
-impl crate::BlockingClient {
+impl<'a> crate::BlockingBlooioAccount<'a> {
     /// Access the `contact_card` resource group.
-    pub fn contact_card(&self) -> ContactCard<'_, crate::BlockingClient> {
+    #[must_use]
+    pub fn contact_card(self) -> ContactCard<crate::BlockingBlooioAccount<'a>> {
         ContactCard { client: self }
     }
 }
 
 #[cfg(feature = "async")]
-impl ContactCard<'_, crate::Client> {
+impl ContactCard<crate::BlooioAccount<'_>> {
     /// Get the contact card for a phone number.
     pub async fn get(&self, number: impl Into<String>) -> Result<MyContactCard> {
         self.client
@@ -198,7 +199,7 @@ impl ContactCard<'_, crate::Client> {
 }
 
 #[cfg(feature = "sync")]
-impl ContactCard<'_, crate::BlockingClient> {
+impl ContactCard<crate::BlockingBlooioAccount<'_>> {
     /// Get the contact card for a phone number.
     pub fn get(&self, number: impl Into<String>) -> Result<MyContactCard> {
         self.client.send(GetMyContactCard {

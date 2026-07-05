@@ -6,22 +6,16 @@ use std::time::Duration;
 use crate::core::diagnostics::SensitiveDiagnostics;
 use crate::core::retry::RetryPolicy;
 use crate::error::{Error, Result};
-use crate::secret::Secret;
 
 /// The production base URL for the Blooio API.
 pub const DEFAULT_BASE_URL: &str = "https://backend.blooio.com/v2/api";
 
-/// Shared configuration consumed by both the async and blocking clients.
-///
-/// The API key is wrapped in a [`Secret`] so it can never be logged or
-/// serialized in cleartext. The derived `Debug` is safe: it prints
-/// `api_key: [REDACTED]`.
+/// Shared transport configuration consumed by both the async and blocking
+/// clients.
 #[derive(Clone, Debug)]
 pub struct ClientConfig {
     /// API base URL, without a trailing slash. Defaults to [`DEFAULT_BASE_URL`].
     pub base_url: String,
-    /// Bearer API key.
-    pub api_key: Secret<String>,
     /// Per-request timeout. Defaults to 30 seconds.
     pub timeout: Duration,
     /// `User-Agent` header value.
@@ -39,12 +33,10 @@ pub struct ClientConfig {
     pub sensitive_diagnostics: Option<SensitiveDiagnostics>,
 }
 
-impl ClientConfig {
-    /// Create a configuration from an API key, using production defaults.
-    pub fn new(api_key: impl Into<Secret<String>>) -> Self {
+impl Default for ClientConfig {
+    fn default() -> Self {
         Self {
             base_url: DEFAULT_BASE_URL.to_owned(),
-            api_key: api_key.into(),
             timeout: Duration::from_secs(30),
             user_agent: concat!("blooio-rs/", env!("CARGO_PKG_VERSION")).to_owned(),
             retry: RetryPolicy::default(),
@@ -52,25 +44,25 @@ impl ClientConfig {
             sensitive_diagnostics: None,
         }
     }
+}
+
+impl ClientConfig {
+    /// Create a configuration using production defaults.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Create a configuration from environment variables.
     ///
-    /// Reads `BLOOIO_API_KEY` (required) and `BLOOIO_BASE_URL` (optional).
-    /// Empty values are treated as missing, and the API key is never reflected
-    /// in error messages.
+    /// Reads `BLOOIO_BASE_URL` (optional). Credentials are intentionally kept
+    /// separate; use [`crate::BlooioCreds::from_env`] for `BLOOIO_API_KEY`.
     pub fn from_env() -> Result<Self> {
-        Self::from_env_values(env_var("BLOOIO_API_KEY")?, env_var("BLOOIO_BASE_URL")?)
+        Self::from_env_values(env_var("BLOOIO_BASE_URL")?)
     }
 
-    pub(crate) fn from_env_values(
-        api_key: Option<String>,
-        base_url: Option<String>,
-    ) -> Result<Self> {
-        let api_key = api_key
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| Error::config("BLOOIO_API_KEY is not set"))?;
-
-        let mut config = Self::new(api_key);
+    pub(crate) fn from_env_values(base_url: Option<String>) -> Result<Self> {
+        let mut config = Self::new();
         if let Some(base_url) = base_url.filter(|value| !value.trim().is_empty()) {
             validate_base_url(&base_url, "BLOOIO_BASE_URL")?;
             config = config.with_base_url(base_url);
@@ -190,7 +182,7 @@ mod tests {
 
     #[test]
     fn new_uses_production_defaults() {
-        let cfg = ClientConfig::new("k");
+        let cfg = ClientConfig::new();
         assert_eq!(cfg.base_url, DEFAULT_BASE_URL);
         assert_eq!(cfg.timeout, Duration::from_secs(30));
         assert!(cfg.user_agent.starts_with("blooio-rs/"));
@@ -198,17 +190,17 @@ mod tests {
 
     #[test]
     fn with_base_url_trims_trailing_slashes() {
-        let one = ClientConfig::new("k").with_base_url("https://example.com/api/");
+        let one = ClientConfig::new().with_base_url("https://example.com/api/");
         assert_eq!(one.base_url, "https://example.com/api");
-        let many = ClientConfig::new("k").with_base_url("https://example.com/api///");
+        let many = ClientConfig::new().with_base_url("https://example.com/api///");
         assert_eq!(many.base_url, "https://example.com/api");
-        let none = ClientConfig::new("k").with_base_url("https://example.com/api");
+        let none = ClientConfig::new().with_base_url("https://example.com/api");
         assert_eq!(none.base_url, "https://example.com/api");
     }
 
     #[test]
     fn url_for_concatenates_base_and_path() {
-        let cfg = ClientConfig::new("k").with_base_url("https://example.com/api");
+        let cfg = ClientConfig::new().with_base_url("https://example.com/api");
         assert_eq!(cfg.url_for("/me"), "https://example.com/api/me");
         assert_eq!(
             cfg.url_for("/chats/c1/messages"),
@@ -219,7 +211,7 @@ mod tests {
     #[cfg(feature = "sensitive-diagnostics")]
     #[test]
     fn sensitive_diagnostics_can_be_set_and_cleared() {
-        let cfg = ClientConfig::new("k").with_sensitive_diagnostics(SensitiveDiagnostics::noop());
+        let cfg = ClientConfig::new().with_sensitive_diagnostics(SensitiveDiagnostics::noop());
         assert!(cfg.sensitive_diagnostics.is_some());
         let dbg = format!("{cfg:?}");
         assert!(dbg.contains("sensitive_diagnostics"));
@@ -230,39 +222,28 @@ mod tests {
     }
 
     #[test]
-    fn from_env_values_requires_api_key() {
-        let err = ClientConfig::from_env_values(None, None).unwrap_err();
-        assert!(matches!(err, Error::Config(_)));
-        assert!(!err.to_string().contains("secret"));
+    fn from_env_values_uses_defaults_without_base_url() {
+        let cfg = ClientConfig::from_env_values(None).unwrap();
+        assert_eq!(cfg.base_url, DEFAULT_BASE_URL);
     }
 
     #[test]
     fn from_env_values_uses_base_url_override() {
-        let cfg = ClientConfig::from_env_values(
-            Some("secret-key".into()),
-            Some("https://example.com/api/".into()),
-        )
-        .unwrap();
+        let cfg = ClientConfig::from_env_values(Some("https://example.com/api/".into())).unwrap();
         assert_eq!(cfg.base_url, "https://example.com/api");
-        assert_eq!(cfg.api_key.expose(), "secret-key");
     }
 
     #[test]
     fn from_env_values_rejects_invalid_base_url() {
-        let err = ClientConfig::from_env_values(Some("secret-key".into()), Some("nope".into()))
-            .unwrap_err();
+        let err = ClientConfig::from_env_values(Some("nope".into())).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
-        assert!(!err.to_string().contains("secret-key"));
     }
 
     #[test]
     fn from_env_values_rejects_base_url_query() {
-        let err = ClientConfig::from_env_values(
-            Some("secret-key".into()),
-            Some("https://example.com/api?token=secret-key".into()),
-        )
-        .unwrap_err();
+        let err =
+            ClientConfig::from_env_values(Some("https://example.com/api?token=secret".into()))
+                .unwrap_err();
         assert!(matches!(err, Error::Config(_)));
-        assert!(!err.to_string().contains("secret-key"));
     }
 }
