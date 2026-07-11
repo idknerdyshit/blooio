@@ -33,7 +33,9 @@ use blooio::{
     ApiResponse, BlooioAccount, BlooioCreds, Client, ClientConfig, Operation, RequestOptions,
     ResponseMeta, RetryPolicy,
 };
-use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
+use wiremock::matchers::{
+    body_json, body_string_contains, header, header_exists, method, path, query_param,
+};
 use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
 /// A client with fast, deterministic retries for exercising the retry loop
@@ -256,6 +258,29 @@ async fn post_sends_json_body_and_content_type() {
 }
 
 #[tokio::test]
+async fn contact_update_none_sends_null_to_clear_name() {
+    let server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/contacts/c1"))
+        .and(body_json(serde_json::json!({ "name": null })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "c1",
+            "name": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let contact = client(&server)
+        .await
+        .contacts()
+        .update("c1", None)
+        .await
+        .unwrap();
+    assert_eq!(contact.name, None);
+}
+
+#[tokio::test]
 async fn send_message_includes_idempotency_key() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -379,19 +404,19 @@ async fn request_options_base_url_overrides_url_only() {
 #[tokio::test]
 async fn request_options_retry_override_retries_transient_error() {
     let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/contacts"))
+    Mock::given(method("GET"))
+        .and(path("/me"))
         .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
         .up_to_n_times(1)
         .with_priority(1)
         .expect(1)
         .mount(&server)
         .await;
-    Mock::given(method("POST"))
-        .and(path("/contacts"))
+    Mock::given(method("GET"))
+        .and(path("/me"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": "c1",
-            "name": "Alice"
+            "valid": true,
+            "user_id": "u1"
         })))
         .with_priority(2)
         .expect(1)
@@ -406,9 +431,9 @@ async fn request_options_retry_override_retries_transient_error() {
         )
         .unwrap(),
     );
-    let contact = client
+    let me = client
         .send_with_options(
-            CreateContact::new("+15550001111").name("Alice"),
+            blooio::resources::account::GetMe,
             RequestOptions::new().retry(
                 RetryPolicy::default()
                     .with_max_retries(1)
@@ -418,7 +443,7 @@ async fn request_options_retry_override_retries_transient_error() {
         )
         .await
         .unwrap();
-    assert_eq!(contact.id.as_deref(), Some("c1"));
+    assert_eq!(me.user_id.as_deref(), Some("u1"));
 }
 
 #[tokio::test]
@@ -454,7 +479,7 @@ async fn generated_idempotency_key_is_reused_across_retries() {
     };
 
     Mock::given(method("POST"))
-        .and(path("/contacts"))
+        .and(path("/chats/chat1/messages"))
         .and(capture.clone())
         .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
         .up_to_n_times(1)
@@ -463,10 +488,10 @@ async fn generated_idempotency_key_is_reused_across_retries() {
         .mount(&server)
         .await;
     Mock::given(method("POST"))
-        .and(path("/contacts"))
+        .and(path("/chats/chat1/messages"))
         .and(capture)
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": "c1"
+            "message_id": "m1"
         })))
         .with_priority(2)
         .expect(1)
@@ -474,8 +499,8 @@ async fn generated_idempotency_key_is_reused_across_retries() {
         .await;
 
     retrying_client(&server, 1)
-        .contacts()
-        .create(CreateContact::new("+15550001111"))
+        .chat("chat1")
+        .send_text("hello")
         .await
         .unwrap();
 
@@ -698,6 +723,114 @@ async fn connection_refused_maps_to_transport_error() {
     assert!(!err.to_string().contains("127.0.0.1:1"));
     assert_eq!(err.code(), None);
     assert_eq!(err.status(), None);
+}
+
+#[tokio::test]
+async fn invalid_config_is_rejected_by_fallible_async_constructors() {
+    let config = ClientConfig::new().with_user_agent("bad\nvalue");
+    assert!(matches!(
+        Client::from_config(config.clone()),
+        Err(blooio::Error::Config(_))
+    ));
+    assert!(matches!(
+        Client::try_from_config_and_http_client(config, reqwest::Client::new()),
+        Err(blooio::Error::Config(_))
+    ));
+}
+
+#[tokio::test]
+async fn async_response_body_limit_is_exact_and_non_retryable() {
+    let server = MockServer::start().await;
+    let body = r#"{"valid":true}"#;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let exact = TestClient::new(
+        Client::from_config(ClientConfig::new().with_base_url(server.uri()))
+            .unwrap()
+            .with_max_response_body_bytes(body.len()),
+    );
+    assert_eq!(exact.me().get().await.unwrap().valid, Some(true));
+
+    let too_small = TestClient::new(
+        Client::from_config(ClientConfig::new().with_base_url(server.uri()))
+            .unwrap()
+            .with_max_response_body_bytes(body.len() - 1),
+    );
+    let err = too_small.me().get().await.unwrap_err();
+    assert!(matches!(err, blooio::Error::ResponseBodyTooLarge { .. }));
+    assert!(!err.is_retryable());
+}
+
+#[tokio::test]
+async fn async_default_client_does_not_follow_redirects() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .respond_with(ResponseTemplate::new(307).insert_header("location", "/redirect-target"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/redirect-target"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let err = client(&server).await.me().get().await.unwrap_err();
+    assert_eq!(err.status(), Some(307));
+}
+
+#[tokio::test]
+async fn group_icon_is_uploaded_as_multipart() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/groups/g1/icon"))
+        .and(header(
+            "content-type",
+            "multipart/form-data; boundary=blooio-form-boundary-0",
+        ))
+        .and(body_string_contains("name=\"icon\""))
+        .and(body_string_contains("filename=\"anonymous_file\""))
+        .and(body_string_contains("icon-bytes"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "success": true,
+            "group_id": "g1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let response = client(&server)
+        .await
+        .groups()
+        .set_icon_bytes("g1", b"icon-bytes".to_vec())
+        .await
+        .unwrap();
+    assert_eq!(response.success, Some(true));
+}
+
+#[tokio::test]
+async fn scoped_chat_rejects_a_mismatched_operation_target() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let err = client(&server)
+        .await
+        .chat("chat-a")
+        .send(blooio::resources::chats::SendMessage::new("chat-b").text("hello"))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, blooio::Error::Config(_)));
 }
 
 #[tokio::test]
@@ -1142,8 +1275,8 @@ async fn custom_user_agent_is_sent() {
 async fn retries_unknown_429_then_succeeds() {
     let server = MockServer::start().await;
     // First attempt: unknown 429 with a Retry-After hint. Exhausted after one match.
-    Mock::given(method("POST"))
-        .and(path("/contacts"))
+    Mock::given(method("GET"))
+        .and(path("/me"))
         .respond_with(
             ResponseTemplate::new(429)
                 .insert_header("retry-after", "0")
@@ -1158,23 +1291,19 @@ async fn retries_unknown_429_then_succeeds() {
         .mount(&server)
         .await;
     // Retry lands here.
-    Mock::given(method("POST"))
-        .and(path("/contacts"))
+    Mock::given(method("GET"))
+        .and(path("/me"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "id": "c1",
-            "name": "Alice"
+            "valid": true,
+            "user_id": "u1"
         })))
         .with_priority(2)
         .expect(1)
         .mount(&server)
         .await;
 
-    let contact = retrying_client(&server, 2)
-        .contacts()
-        .create(CreateContact::new("+15550001111").name("Alice"))
-        .await
-        .unwrap();
-    assert_eq!(contact.id.as_deref(), Some("c1"));
+    let me = retrying_client(&server, 2).me().get().await.unwrap();
+    assert_eq!(me.user_id.as_deref(), Some("u1"));
 }
 
 #[tokio::test]
@@ -1241,13 +1370,13 @@ async fn does_not_retry_client_error() {
 }
 
 #[tokio::test]
-async fn gives_up_after_exhausting_retries() {
+async fn unsafe_mutation_is_not_retried() {
     let server = MockServer::start().await;
-    // Always 503; with max_retries = 2 the client makes 3 attempts total.
+    // A create is not known to be idempotent, so policy retries do not apply.
     Mock::given(method("POST"))
         .and(path("/contacts"))
         .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "0"))
-        .expect(3)
+        .expect(1)
         .mount(&server)
         .await;
 

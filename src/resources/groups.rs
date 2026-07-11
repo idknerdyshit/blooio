@@ -3,6 +3,7 @@
 use http::Method;
 use serde::{Deserialize, Serialize};
 
+use crate::core::multipart::{boundary_for, file_body, part_content_type};
 use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::Result;
@@ -17,6 +18,7 @@ use crate::types::{DeleteResponse, Group, GroupIconResponse, GroupMember, IntoSt
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ListGroupsResponse {
+    #[serde(default)]
     pub groups: Vec<Group>,
     pub pagination: Option<Pagination>,
 }
@@ -39,6 +41,7 @@ pub struct ListGroupMembersResponse {
     pub group_id: Option<String>,
     pub group_name: Option<String>,
     pub icon_url: Option<String>,
+    #[serde(default)]
     pub members: Vec<GroupMember>,
     pub pagination: Option<Pagination>,
 }
@@ -218,7 +221,7 @@ pub struct SetGroupIcon {
     #[serde(skip)]
     /// Blooio group id.
     pub group_id: String,
-    /// Icon value accepted by the API.
+    /// UTF-8 icon contents uploaded as multipart form data.
     pub icon: String,
 }
 
@@ -228,8 +231,85 @@ impl Operation for SetGroupIcon {
     fn path(&self) -> String {
         format!("/groups/{}/icon", encode_path_segment(&self.group_id))
     }
+    fn headers(&self) -> Vec<(&'static str, String)> {
+        vec![(
+            "Content-Type",
+            format!(
+                "multipart/form-data; boundary={}",
+                boundary_for(self.icon.as_bytes())
+            ),
+        )]
+    }
     fn body(&self) -> Result<Option<Vec<u8>>> {
-        json_body(self)
+        let boundary = boundary_for(self.icon.as_bytes());
+        Ok(Some(file_body(
+            &boundary,
+            "icon",
+            self.icon.as_bytes(),
+            Some("anonymous_file"),
+            "application/octet-stream",
+        )))
+    }
+}
+
+/// Binary `POST /groups/{groupId}/icon` upload with filename/MIME controls.
+#[allow(missing_docs)]
+#[derive(Debug, Clone)]
+pub struct UploadGroupIcon {
+    pub group_id: String,
+    pub icon: Vec<u8>,
+    pub filename: String,
+    pub content_type: Option<String>,
+}
+
+impl UploadGroupIcon {
+    /// Create a binary group-icon upload operation.
+    pub fn new(group_id: impl Into<String>, icon: impl Into<Vec<u8>>) -> Self {
+        Self {
+            group_id: group_id.into(),
+            icon: icon.into(),
+            filename: "anonymous_file".to_owned(),
+            content_type: None,
+        }
+    }
+
+    /// Set the multipart filename.
+    #[must_use]
+    pub fn filename(mut self, filename: impl Into<String>) -> Self {
+        self.filename = filename.into();
+        self
+    }
+
+    /// Set the icon MIME type.
+    #[must_use]
+    pub fn content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
+    }
+}
+
+impl Operation for UploadGroupIcon {
+    type Output = GroupIconResponse;
+    const METHOD: Method = Method::POST;
+    fn path(&self) -> String {
+        format!("/groups/{}/icon", encode_path_segment(&self.group_id))
+    }
+    fn headers(&self) -> Vec<(&'static str, String)> {
+        vec![(
+            "Content-Type",
+            format!("multipart/form-data; boundary={}", boundary_for(&self.icon)),
+        )]
+    }
+    fn body(&self) -> Result<Option<Vec<u8>>> {
+        let boundary = boundary_for(&self.icon);
+        let content_type = part_content_type(self.content_type.as_deref())?;
+        Ok(Some(file_body(
+            &boundary,
+            "icon",
+            &self.icon,
+            Some(&self.filename),
+            content_type,
+        )))
     }
 }
 
@@ -426,6 +506,20 @@ impl<'c> Groups<crate::BlooioAccount<'c>> {
             .await
     }
 
+    /// Set a group icon from arbitrary binary bytes.
+    pub async fn set_icon_bytes(
+        &self,
+        group_id: impl Into<String>,
+        icon: impl Into<Vec<u8>>,
+    ) -> Result<GroupIconResponse> {
+        self.client.send(UploadGroupIcon::new(group_id, icon)).await
+    }
+
+    /// Set a group icon with explicit upload metadata.
+    pub async fn set_icon_with(&self, op: UploadGroupIcon) -> Result<GroupIconResponse> {
+        self.client.send(op).await
+    }
+
     /// Remove the group icon.
     pub async fn remove_icon(&self, group_id: impl Into<String>) -> Result<GroupIconResponse> {
         self.client
@@ -508,6 +602,20 @@ impl<'c> Groups<crate::BlockingBlooioAccount<'c>> {
             group_id: group_id.into(),
             icon: icon.into(),
         })
+    }
+
+    /// Set a group icon from arbitrary binary bytes.
+    pub fn set_icon_bytes(
+        &self,
+        group_id: impl Into<String>,
+        icon: impl Into<Vec<u8>>,
+    ) -> Result<GroupIconResponse> {
+        self.client.send(UploadGroupIcon::new(group_id, icon))
+    }
+
+    /// Set a group icon with explicit upload metadata.
+    pub fn set_icon_with(&self, op: UploadGroupIcon) -> Result<GroupIconResponse> {
+        self.client.send(op)
     }
 
     /// Remove the group icon.
@@ -802,23 +910,38 @@ mod tests {
         assert_eq!(SetGroupIcon::METHOD, http::Method::POST);
         let op = SetGroupIcon {
             group_id: "g1".into(),
-            icon: "https://example.com/icon.png".into(),
+            icon: "icon-bytes".into(),
         };
         assert_eq!(op.path(), "/groups/g1/icon");
     }
 
     #[test]
     fn set_group_icon_body() {
-        let op = SetGroupIcon {
-            group_id: "g1".into(),
-            icon: "https://example.com/icon.png".into(),
-        };
+        let op = UploadGroupIcon::new("g1", b"icon-bytes".to_vec())
+            .filename("icon.png")
+            .content_type("image/png");
+        let headers = op.headers();
+        assert!(headers[0].1.starts_with("multipart/form-data; boundary="));
         let body = op.body().unwrap().unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(
-            v,
-            serde_json::json!({ "icon": "https://example.com/icon.png" })
-        );
+        let body = String::from_utf8(body).unwrap();
+        assert!(body.contains("name=\"icon\""));
+        assert!(body.contains("filename=\"icon.png\""));
+        assert!(body.contains("Content-Type: image/png"));
+        assert!(body.contains("icon-bytes"));
+    }
+
+    #[test]
+    fn group_icon_uploads_have_default_filename() {
+        let legacy = SetGroupIcon {
+            group_id: "g1".into(),
+            icon: "icon-bytes".into(),
+        };
+        let legacy_body = String::from_utf8(legacy.body().unwrap().unwrap()).unwrap();
+        assert!(legacy_body.contains("filename=\"anonymous_file\""));
+
+        let binary = UploadGroupIcon::new("g1", b"icon-bytes".to_vec());
+        let binary_body = String::from_utf8(binary.body().unwrap().unwrap()).unwrap();
+        assert!(binary_body.contains("filename=\"anonymous_file\""));
     }
 
     // --- RemoveGroupIcon ---

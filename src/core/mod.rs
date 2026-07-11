@@ -4,6 +4,7 @@
 
 #[cfg(feature = "sensitive-diagnostics")]
 pub mod diagnostics;
+pub(crate) mod multipart;
 pub mod operation;
 pub mod options;
 pub mod pagination;

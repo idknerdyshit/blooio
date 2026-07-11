@@ -17,6 +17,7 @@ use crate::types::{Contact, DeleteResponse, IntoStringList};
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ListContactsResponse {
+    #[serde(default)]
     pub contacts: Vec<Contact>,
     pub pagination: Option<Pagination>,
 }
@@ -67,6 +68,7 @@ pub struct ContactTag {
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ContactTagsResponse {
+    #[serde(default)]
     pub tags: Vec<ContactTag>,
 }
 
@@ -175,8 +177,7 @@ pub struct UpdateContact {
     #[serde(skip)]
     /// Blooio contact id.
     pub contact_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    /// Replacement display name.
+    /// Replacement display name. `None` clears the name with JSON `null`.
     pub name: Option<String>,
 }
 
@@ -367,7 +368,7 @@ impl<'c> Contacts<crate::BlooioAccount<'c>> {
             .await
     }
 
-    /// Update a contact's name.
+    /// Update a contact's name. Pass `None` to clear the current name.
     pub async fn update(
         &self,
         contact_id: impl Into<String>,
@@ -475,7 +476,7 @@ impl<'c> Contacts<crate::BlockingBlooioAccount<'c>> {
         })
     }
 
-    /// Update a contact's name.
+    /// Update a contact's name. Pass `None` to clear the current name.
     pub fn update(&self, contact_id: impl Into<String>, name: Option<String>) -> Result<Contact> {
         self.client.send(UpdateContact {
             contact_id: contact_id.into(),
@@ -673,17 +674,6 @@ mod tests {
     }
 
     #[test]
-    fn update_contact_body_no_name() {
-        let op = UpdateContact {
-            contact_id: "abc123".into(),
-            name: None,
-        };
-        let body = op.body().unwrap().unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(v, serde_json::json!({}));
-    }
-
-    #[test]
     fn update_contact_body_with_name() {
         let op = UpdateContact {
             contact_id: "abc123".into(),
@@ -692,6 +682,17 @@ mod tests {
         let body = op.body().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v, serde_json::json!({ "name": "Bob" }));
+    }
+
+    #[test]
+    fn update_contact_body_clear_name() {
+        let op = UpdateContact {
+            contact_id: "abc123".into(),
+            name: None,
+        };
+        let body = op.body().unwrap().unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "name": null }));
     }
 
     // --- DeleteContact ---

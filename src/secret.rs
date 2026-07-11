@@ -22,7 +22,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// A wrapper around a sensitive value that redacts on debug/display and wipes
 /// its buffer on drop.
-#[derive(Clone, ZeroizeOnDrop)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct Secret<T: Zeroize>(T);
 
 impl<T: Zeroize> Secret<T> {
@@ -106,5 +106,12 @@ mod tests {
     fn deserialize_from_json_string() {
         let s: Secret<String> = serde_json::from_str("\"k\"").unwrap();
         assert_eq!(s.expose(), "k");
+    }
+
+    #[test]
+    fn can_be_zeroized_early() {
+        let mut secret = Secret::from("super-secret-key");
+        secret.zeroize();
+        assert!(secret.expose().is_empty());
     }
 }

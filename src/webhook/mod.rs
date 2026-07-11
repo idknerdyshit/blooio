@@ -2,7 +2,11 @@
 //!
 //! This module is framework-agnostic: it does not run a web server. Parse the
 //! POST body with [`WebhookEvent::parse`] and verify authenticity with
-//! [`signature::verify`].
+//! [`signature::verify`]. Limit the body before buffering it; the recommended
+//! default maximum is [`DEFAULT_MAX_WEBHOOK_BODY_BYTES`].
+
+/// Recommended maximum accepted webhook body size, in bytes (256 KiB).
+pub const DEFAULT_MAX_WEBHOOK_BODY_BYTES: usize = 262_144;
 
 pub mod signature;
 
@@ -21,7 +25,7 @@ pub use signature::{
 
 #[cfg(any(feature = "axum", feature = "actix"))]
 pub use server::{
-    DEFAULT_MAX_WEBHOOK_BODY_BYTES, DEFAULT_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook,
+    DEFAULT_SIGNATURE_HEADER, LEGACY_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook,
     WebhookRejection, WebhookVerificationResolver, WebhookVerifier, X_BLOOIO_SIGNATURE_HEADER,
 };
 
@@ -123,7 +127,9 @@ pub struct WebhookEvent {
 
 impl WebhookEvent {
     /// Parse a raw webhook body. Verify the signature separately, before
-    /// trusting the contents.
+    /// trusting the contents. Callers that buffer an HTTP body themselves
+    /// should reject bodies larger than [`DEFAULT_MAX_WEBHOOK_BODY_BYTES`]
+    /// before calling this method.
     pub fn parse(raw_body: &[u8]) -> Result<Self> {
         let payload: WebhookEventPayload = serde_json::from_slice(raw_body)
             .map_err(|e| Error::decode_json::<WebhookEventPayload>(&e))?;
@@ -259,6 +265,16 @@ mod tests {
         assert_eq!(ev.kind(), Some(MessageEventKind::Received));
         assert_eq!(ev.payload.is_group, Some(true));
         assert_eq!(ev.payload.group_id.as_deref(), Some("g1"));
+    }
+
+    #[test]
+    fn parses_received_reply_metadata() {
+        let raw = br#"{"event":"message.received","message_id":"m2","reply_to":{"message_id":"m1","guid":"p:0/m1","part_index":2}}"#;
+        let ev = WebhookEvent::parse(raw).unwrap();
+        let reply = ev.payload.reply_to.unwrap();
+        assert_eq!(reply.message_id.as_deref(), Some("m1"));
+        assert_eq!(reply.guid.as_deref(), Some("p:0/m1"));
+        assert_eq!(reply.part_index, Some(2));
     }
 
     #[test]

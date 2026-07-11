@@ -27,6 +27,7 @@ pub struct NumberInfo {
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ListNumbersResponse {
+    #[serde(default)]
     pub numbers: Vec<NumberInfo>,
 }
 

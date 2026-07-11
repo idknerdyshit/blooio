@@ -7,7 +7,7 @@ use crate::client::AttemptContext;
 use crate::client::sensitive::{SensitiveAttempt, SensitiveAttemptParts};
 #[cfg(feature = "tracing")]
 use crate::client::trace::{self, OperationTrace};
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, DEFAULT_MAX_RESPONSE_BODY_BYTES};
 #[cfg(feature = "sensitive-diagnostics")]
 use crate::core::diagnostics::SensitiveTransportErrorStage;
 use crate::core::operation::Operation;
@@ -30,6 +30,7 @@ use crate::error::{Error, Result};
 pub struct BlockingClient {
     config: ClientConfig,
     agent: ureq::Agent,
+    max_response_body_bytes: usize,
 }
 
 /// Account-scoped blocking Blooio API handle.
@@ -55,15 +56,18 @@ impl BlockingClient {
 
     /// Build a client from a full [`ClientConfig`].
     pub fn from_config(config: ClientConfig) -> Result<Self> {
+        config.validate()?;
         let builder = ureq::Agent::config_builder()
             // We read non-2xx bodies ourselves to map them to `Error::Api`.
             .http_status_as_error(false)
+            .max_redirects(0)
+            .max_redirects_will_error(false)
             .user_agent(&config.user_agent)
             .timeout_global(Some(config.timeout));
 
-        // When the native-tls backend is selected (and rustls is not), point
-        // ureq at the native-tls provider explicitly.
-        #[cfg(all(feature = "native-tls", not(feature = "rustls")))]
+        // When native-tls is selected, point ureq at that provider explicitly.
+        // It takes precedence if both TLS backend features are enabled.
+        #[cfg(feature = "native-tls")]
         let builder = builder.tls_config(
             ureq::tls::TlsConfig::builder()
                 .provider(ureq::tls::TlsProvider::NativeTls)
@@ -71,7 +75,7 @@ impl BlockingClient {
         );
 
         let agent: ureq::Agent = builder.build().into();
-        Ok(Self::from_config_and_agent(config, agent))
+        Self::try_from_config_and_agent(config, agent)
     }
 
     /// Build a client from configuration and a caller-provided [`ureq::Agent`].
@@ -80,8 +84,29 @@ impl BlockingClient {
     /// DNS resolver, and transport policy. The supplied agent is used as-is;
     /// values such as [`ClientConfig::timeout`] and
     /// [`ClientConfig::user_agent`] are not applied to it by this constructor.
+    /// Use [`Self::try_from_config_and_agent`] when configuration should be
+    /// validated before construction.
+    #[must_use]
     pub fn from_config_and_agent(config: ClientConfig, agent: ureq::Agent) -> Self {
-        BlockingClient { config, agent }
+        BlockingClient {
+            config,
+            agent,
+            max_response_body_bytes: DEFAULT_MAX_RESPONSE_BODY_BYTES,
+        }
+    }
+
+    /// Build a client from configuration and a caller-provided transport,
+    /// validating the configuration first.
+    pub fn try_from_config_and_agent(config: ClientConfig, agent: ureq::Agent) -> Result<Self> {
+        config.validate()?;
+        Ok(Self::from_config_and_agent(config, agent))
+    }
+
+    /// Override the maximum response body size retained in memory.
+    #[must_use]
+    pub fn with_max_response_body_bytes(mut self, max_response_body_bytes: usize) -> Self {
+        self.max_response_body_bytes = max_response_body_bytes;
+        self
     }
 
     /// The configuration this client was built with.
@@ -158,7 +183,16 @@ impl BlockingBlooioAccount<'_> {
         op: O,
         options: RequestOptions,
     ) -> Result<ApiResponse<O::Output>> {
-        let retry = options.retry_or(self.client.config.retry);
+        options.validate_base_url()?;
+        let operation_retry_safe = matches!(
+            O::METHOD,
+            http::Method::GET | http::Method::HEAD | http::Method::OPTIONS
+        ) || O::RETRY_SAFE;
+        let retry = if operation_retry_safe {
+            options.retry_or(self.client.config.retry)
+        } else {
+            crate::RetryPolicy::none()
+        };
         let max_retries = retry.max_retries;
         let operation_type = std::any::type_name::<O>();
         #[cfg(feature = "tracing")]
@@ -175,7 +209,7 @@ impl BlockingBlooioAccount<'_> {
         };
         spec.apply_options(&options);
         // A retried mutating request must be idempotent.
-        if max_retries > 0 {
+        if max_retries > 0 && O::RETRY_SAFE {
             spec.ensure_idempotency_key();
         }
         let url = url_with_query(
@@ -305,6 +339,9 @@ impl BlockingClient {
         let raw = response.and_then(|resp| {
             Self::read_raw_response(
                 resp,
+                ctx.options
+                    .max_response_body_bytes
+                    .unwrap_or(self.max_response_body_bytes),
                 #[cfg(feature = "sensitive-diagnostics")]
                 &sensitive,
             )
@@ -331,13 +368,12 @@ impl BlockingClient {
         let request = match request {
             Ok(request) => request,
             Err(e) => {
-                let raw_error = e.to_string();
                 #[cfg(feature = "sensitive-diagnostics")]
-                sensitive.transport_error(
-                    SensitiveTransportErrorStage::BuildRequest,
-                    raw_error.clone(),
-                );
-                return Err(Error::transport(&raw_error));
+                sensitive
+                    .transport_error(SensitiveTransportErrorStage::BuildRequest, e.to_string());
+                #[cfg(not(feature = "sensitive-diagnostics"))]
+                let _ = e;
+                return Err(Error::request_build());
             }
         };
 
@@ -356,17 +392,34 @@ impl BlockingClient {
 
     fn read_raw_response(
         mut resp: http::Response<ureq::Body>,
+        max_response_body_bytes: usize,
         #[cfg(feature = "sensitive-diagnostics")] sensitive: &SensitiveAttempt<'_>,
     ) -> Result<RawResponse> {
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
-        match resp.body_mut().read_to_vec() {
+        let read_limit = u64::try_from(max_response_body_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        match resp
+            .body_mut()
+            .with_config()
+            .limit(read_limit)
+            .read_to_vec()
+        {
             Ok(bytes) => {
+                if bytes.len() > max_response_body_bytes {
+                    return Err(Error::ResponseBodyTooLarge {
+                        limit: max_response_body_bytes,
+                    });
+                }
                 let raw = RawResponse::new(status, headers, bytes.into());
                 #[cfg(feature = "sensitive-diagnostics")]
                 sensitive.response(&raw);
                 Ok(raw)
             }
+            Err(ureq::Error::BodyExceedsLimit(_)) => Err(Error::ResponseBodyTooLarge {
+                limit: max_response_body_bytes,
+            }),
             Err(e) => {
                 let raw_error = e.to_string();
                 #[cfg(feature = "sensitive-diagnostics")]

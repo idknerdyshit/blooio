@@ -32,8 +32,8 @@ use futures_util::StreamExt as _;
 
 use crate::webhook::WebhookEvent;
 use crate::webhook::server::{
-    DEFAULT_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook, WebhookRejection,
-    WebhookVerificationResolver, WebhookVerifier, X_BLOOIO_SIGNATURE_HEADER,
+    DEFAULT_SIGNATURE_HEADER, LEGACY_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook,
+    WebhookRejection, WebhookVerificationResolver, WebhookVerifier,
 };
 use crate::webhook::signature::SignatureHeader;
 
@@ -87,7 +87,7 @@ where
         let Some(signature) = signature_header(
             req.headers(),
             DEFAULT_SIGNATURE_HEADER,
-            Some(X_BLOOIO_SIGNATURE_HEADER),
+            Some(LEGACY_SIGNATURE_HEADER),
         ) else {
             return Box::pin(async { Err(WebhookRejection::MissingSignature.into()) });
         };
@@ -163,4 +163,34 @@ async fn read_limited_payload(
         bytes.extend_from_slice(&chunk);
     }
     Ok(web::Bytes::from(bytes))
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
+mod tests {
+    use std::pin::Pin;
+
+    use super::*;
+
+    #[actix_web::test]
+    async fn body_stream_error_is_not_reflected() {
+        let stream: Pin<
+            Box<
+                dyn futures_util::Stream<Item = Result<web::Bytes, actix_web::error::PayloadError>>,
+            >,
+        > = Box::pin(futures_util::stream::once(async {
+            Err(actix_web::error::PayloadError::Io(std::io::Error::other(
+                "sentinel-secret-diagnostic",
+            )))
+        }));
+        let payload = actix_web::dev::Payload::from(stream);
+        let rejection = read_limited_payload(payload, 1024).await.unwrap_err();
+        assert!(!rejection.to_string().contains("sentinel-secret-diagnostic"));
+        assert!(!format!("{rejection:?}").contains("sentinel-secret-diagnostic"));
+    }
 }

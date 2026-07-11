@@ -117,7 +117,7 @@ impl Operation for HeadHealth {
 }
 
 #[test]
-fn retries_transient_5xx_until_budget_exhausted() {
+fn unsafe_mutation_does_not_retry_transient_5xx() {
     let server = MockServer::start();
     // Always 503 with a zero Retry-After so the loop runs without real delay.
     let m = server.mock(|when, then| {
@@ -143,14 +143,13 @@ fn retries_transient_5xx_until_budget_exhausted() {
         .contacts()
         .create(CreateContact::new("+15550002222"))
         .unwrap_err();
-    // max_retries = 2 → 3 total attempts.
-    m.assert_calls(3);
+    m.assert_calls(1);
     assert_eq!(err.status(), Some(503));
     assert_eq!(err.retry_after(), Some(Duration::from_secs(0)));
 }
 
 #[test]
-fn retries_unknown_429_code_until_budget_exhausted() {
+fn unsafe_mutation_does_not_retry_unknown_429() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(POST).path("/contacts");
@@ -180,7 +179,7 @@ fn retries_unknown_429_code_until_budget_exhausted() {
         .contacts()
         .create(CreateContact::new("+15550001111"))
         .unwrap_err();
-    m.assert_calls(2);
+    m.assert_calls(1);
     assert_eq!(err.status(), Some(429));
     assert_eq!(err.code(), Some("temporarily_rate_limited"));
     assert!(err.is_retryable());
@@ -342,6 +341,22 @@ fn post_sends_json_body_and_content_type() {
 }
 
 #[test]
+fn contact_update_none_sends_null_to_clear_name() {
+    let server = MockServer::start();
+    let update = server.mock(|when, then| {
+        when.method(PATCH)
+            .path("/contacts/c1")
+            .json_body(serde_json::json!({ "name": null }));
+        then.status(200)
+            .json_body(serde_json::json!({ "id": "c1", "name": null }));
+    });
+
+    let contact = client(&server).contacts().update("c1", None).unwrap();
+    assert_eq!(contact.name, None);
+    update.assert();
+}
+
+#[test]
 fn send_message_includes_idempotency_key() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
@@ -493,7 +508,7 @@ fn generated_idempotency_key_is_sent_across_retries() {
     let server = MockServer::start();
     let m = server.mock(|when, then| {
         when.method(POST)
-            .path("/contacts")
+            .path("/chats/chat1/messages")
             .header_exists("idempotency-key");
         then.status(503).header("retry-after", "0");
     });
@@ -511,10 +526,7 @@ fn generated_idempotency_key_is_sent_across_retries() {
         )
         .unwrap(),
     );
-    let err = client
-        .contacts()
-        .create(CreateContact::new("+15550001111"))
-        .unwrap_err();
+    let err = client.chat("chat1").send_text("hello").unwrap_err();
     assert_eq!(err.status(), Some(503));
     m.assert_calls(2);
 }
@@ -706,6 +718,107 @@ fn connection_refused_maps_to_transport_error() {
     assert!(!err.to_string().contains("127.0.0.1:1"));
     assert_eq!(err.code(), None);
     assert_eq!(err.status(), None);
+}
+
+#[test]
+fn invalid_config_is_rejected_by_fallible_blocking_constructors() {
+    let config = ClientConfig::new().with_user_agent("bad\nvalue");
+    assert!(matches!(
+        BlockingClient::from_config(config.clone()),
+        Err(blooio::Error::Config(_))
+    ));
+    assert!(matches!(
+        BlockingClient::try_from_config_and_agent(config, ureq::Agent::new_with_defaults()),
+        Err(blooio::Error::Config(_))
+    ));
+}
+
+#[test]
+fn blocking_response_body_limit_is_exact_and_non_retryable() {
+    let server = MockServer::start();
+    let body = r#"{"valid":true}"#;
+    let response = server.mock(|when, then| {
+        when.method(GET).path("/me");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(body);
+    });
+
+    let exact = TestBlockingClient::new(
+        BlockingClient::from_config(ClientConfig::new().with_base_url(server.base_url()))
+            .unwrap()
+            .with_max_response_body_bytes(body.len()),
+    );
+    assert_eq!(exact.me().get().unwrap().valid, Some(true));
+
+    let too_small = TestBlockingClient::new(
+        BlockingClient::from_config(ClientConfig::new().with_base_url(server.base_url()))
+            .unwrap()
+            .with_max_response_body_bytes(body.len() - 1),
+    );
+    let err = too_small.me().get().unwrap_err();
+    assert!(matches!(err, blooio::Error::ResponseBodyTooLarge { .. }));
+    assert!(!err.is_retryable());
+    response.assert_calls(2);
+}
+
+#[test]
+fn blocking_default_client_does_not_follow_redirects() {
+    let server = MockServer::start();
+    let redirect = server.mock(|when, then| {
+        when.method(GET).path("/me");
+        then.status(307).header("location", "/redirect-target");
+    });
+    let target = server.mock(|when, then| {
+        when.method(GET).path("/redirect-target");
+        then.status(200).json_body(serde_json::json!({}));
+    });
+
+    let err = client(&server).me().get().unwrap_err();
+    assert_eq!(err.status(), Some(307));
+    redirect.assert_calls(1);
+    target.assert_calls(0);
+}
+
+#[test]
+fn blocking_group_icon_is_uploaded_as_multipart() {
+    let server = MockServer::start();
+    let upload = server.mock(|when, then| {
+        when.method(POST)
+            .path("/groups/g1/icon")
+            .header(
+                "content-type",
+                "multipart/form-data; boundary=blooio-form-boundary-0",
+            )
+            .body_includes("name=\"icon\"")
+            .body_includes("filename=\"anonymous_file\"")
+            .body_includes("icon-bytes");
+        then.status(200)
+            .json_body(serde_json::json!({ "success": true, "group_id": "g1" }));
+    });
+
+    let response = client(&server)
+        .groups()
+        .set_icon_bytes("g1", b"icon-bytes".to_vec())
+        .unwrap();
+    assert_eq!(response.success, Some(true));
+    upload.assert();
+}
+
+#[test]
+fn scoped_blocking_chat_rejects_a_mismatched_operation_target() {
+    let server = MockServer::start();
+    let any_post = server.mock(|when, then| {
+        when.method(POST);
+        then.status(200);
+    });
+
+    let err = client(&server)
+        .chat("chat-a")
+        .send(blooio::resources::chats::SendMessage::new("chat-b").text("hello"))
+        .unwrap_err();
+    assert!(matches!(err, blooio::Error::Config(_)));
+    any_post.assert_calls(0);
 }
 
 #[test]

@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use actix_web::{App, HttpResponse, test, web};
 use blooio::webhook::{
-    DEFAULT_MAX_WEBHOOK_BODY_BYTES, ResolvedWebhook, SignatureHeader, VerifiedWebhook,
+    DEFAULT_MAX_WEBHOOK_BODY_BYTES, ResolvedWebhook, SignatureHeader, VerifiedWebhook, VerifyError,
     WebhookRejection, WebhookVerificationResolver, WebhookVerifier, peek, verify_preparsed,
 };
 use hmac::{Hmac, KeyInit, Mac};
@@ -143,6 +143,25 @@ async fn oversized_body_is_rejected() {
     assert_eq!(resp.status().as_u16(), 413);
 }
 
+#[actix_web::test]
+async fn streaming_body_limit_is_enforced_without_content_length() {
+    let app = test::init_service(app!()).await;
+    for (size, expected) in [
+        (DEFAULT_MAX_WEBHOOK_BODY_BYTES, 401),
+        (DEFAULT_MAX_WEBHOOK_BODY_BYTES + 1, 413),
+    ] {
+        let body = vec![b'x'; size];
+        let mut req = test::TestRequest::post()
+            .uri("/webhooks")
+            .insert_header(("x-blooio-signature", "t=1700000000,v1=deadbeef"))
+            .set_payload(body)
+            .to_request();
+        req.headers_mut().remove("content-length");
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), expected);
+    }
+}
+
 #[derive(Clone)]
 struct DynamicResolver;
 
@@ -154,7 +173,6 @@ struct DynamicContext {
 #[derive(Debug)]
 enum DynamicError {
     Rejection(WebhookRejection),
-    UnknownInternalId,
 }
 
 impl From<WebhookRejection> for DynamicError {
@@ -167,7 +185,6 @@ impl std::fmt::Display for DynamicError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DynamicError::Rejection(rejection) => write!(f, "{rejection}"),
-            DynamicError::UnknownInternalId => f.write_str("unknown internal_id"),
         }
     }
 }
@@ -179,7 +196,6 @@ impl actix_web::ResponseError for DynamicError {
                 actix_web::http::StatusCode::from_u16(rejection.status_code())
                     .unwrap_or(actix_web::http::StatusCode::BAD_REQUEST)
             }
-            DynamicError::UnknownInternalId => actix_web::http::StatusCode::NO_CONTENT,
         }
     }
 }
@@ -196,14 +212,42 @@ impl WebhookVerificationResolver for DynamicResolver {
     ) -> Self::Future<'a> {
         std::future::ready((|| {
             let peeked = peek(raw_body).map_err(WebhookRejection::Malformed)?;
-            if peeked.internal_id.as_deref() != Some("+15550001111") {
-                return Err(DynamicError::UnknownInternalId);
+            let known_identifier = peeked.internal_id.as_deref() == Some("+15550001111");
+            let secret = if known_identifier {
+                SECRET.as_bytes()
+            } else {
+                b"non-production-dummy-secret"
+            };
+            let verification = verify_preparsed(secret, signature, raw_body);
+            if !known_identifier {
+                return Err(WebhookRejection::InvalidSignature(VerifyError::Mismatch).into());
             }
-            verify_preparsed(SECRET.as_bytes(), signature, raw_body)
-                .map_err(WebhookRejection::InvalidSignature)?;
+            verification.map_err(WebhookRejection::InvalidSignature)?;
             Ok(DynamicContext { org_id: "org_1" })
         })())
     }
+}
+
+#[actix_web::test]
+async fn dynamic_resolver_hides_identifier_existence() {
+    let app = test::init_service(dynamic_app!()).await;
+    let known = br#"{"event":"message.received","internal_id":"+15550001111"}"#;
+    let unknown = br#"{"event":"message.received","internal_id":"+15550009999"}"#;
+    let timestamp = now();
+    let mut responses = Vec::new();
+    for body in [known.as_slice(), unknown.as_slice()] {
+        let request = test::TestRequest::post()
+            .uri("/webhooks")
+            .insert_header(("x-blooio-signature", format!("t={timestamp},v1=deadbeef")))
+            .set_payload(body)
+            .to_request();
+        let response = test::call_service(&app, request).await;
+        let status = response.status();
+        let body = test::read_body(response).await;
+        responses.push((status, body));
+    }
+    assert_eq!(responses[0], responses[1]);
+    assert_eq!(responses[0].0.as_u16(), 401);
 }
 
 #[actix_web::test]

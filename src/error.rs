@@ -25,6 +25,17 @@ pub enum Error {
     #[error("transport error: {0}")]
     Transport(String),
 
+    /// The HTTP request could not be constructed from its URL or headers.
+    #[error("failed to build HTTP request")]
+    RequestBuild,
+
+    /// The response body exceeded the configured in-memory limit.
+    #[error("response body exceeds configured limit of {limit} bytes")]
+    ResponseBodyTooLarge {
+        /// Configured maximum response body size.
+        limit: usize,
+    },
+
     /// The request body could not be serialized to JSON.
     #[error("failed to encode request body: {0}")]
     Encode(String),
@@ -72,6 +83,11 @@ impl Error {
     #[cfg(any(feature = "async", feature = "sync"))]
     pub(crate) fn config(e: impl std::fmt::Display) -> Self {
         Error::Config(e.to_string())
+    }
+
+    #[cfg(any(feature = "async", feature = "sync"))]
+    pub(crate) fn request_build() -> Self {
+        Error::RequestBuild
     }
 
     /// The machine-readable API error code, if this is an [`Error::Api`].
@@ -227,6 +243,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    #[cfg(any(feature = "async", feature = "sync", test))]
     pub(crate) fn from_schema(
         status: u16,
         code: Option<String>,
@@ -246,6 +263,7 @@ impl ApiError {
         }
     }
 
+    #[cfg(any(feature = "async", feature = "sync"))]
     pub(crate) fn from_non_schema(status: u16, retry_after: Option<Duration>) -> Self {
         Self {
             status,
@@ -335,10 +353,8 @@ impl ApiError {
     }
 
     fn safe_summary(&self) -> String {
-        if let Some(code) = self.code() {
+        if let Some(code) = self.code().filter(|code| codes::is_known(code)) {
             format!("HTTP {} ({code})", self.status)
-        } else if let Some(error) = self.error() {
-            format!("HTTP {} ({error})", self.status)
         } else if self.schema_body {
             format!("HTTP {}", self.status)
         } else {
@@ -350,7 +366,7 @@ impl ApiError {
 impl fmt::Display for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let summary = self.safe_summary();
-        if let Some(code) = self.code() {
+        if let Some(code) = self.code().filter(|code| codes::is_known(code)) {
             write!(
                 f,
                 "blooio api error (status {}, code {}): {}",
@@ -365,11 +381,19 @@ impl fmt::Display for ApiError {
 impl fmt::Debug for ApiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let server_message = self.server_message.as_ref().map(|_| "[REDACTED]");
+        let code = self.code.as_ref().map(|code| {
+            if codes::is_known(code) {
+                code.as_str()
+            } else {
+                "[REDACTED]"
+            }
+        });
+        let error = self.error.as_ref().map(|_| "[REDACTED]");
         let summary = self.safe_summary();
         f.debug_struct("ApiError")
             .field("status", &self.status)
-            .field("code", &self.code)
-            .field("error", &self.error)
+            .field("code", &code)
+            .field("error", &error)
             .field("server_message", &server_message)
             .field("details", &self.details)
             .field("retry_after", &self.retry_after)
@@ -390,6 +414,7 @@ pub struct ApiErrorDetails {
 }
 
 impl ApiErrorDetails {
+    #[cfg(any(feature = "async", feature = "sync", test))]
     pub(crate) fn new(fields: Map<String, Value>) -> Self {
         Self { fields }
     }
@@ -415,10 +440,9 @@ impl ApiErrorDetails {
 
 impl fmt::Debug for ApiErrorDetails {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let keys = self.fields.keys().map(String::as_str).collect::<Vec<_>>();
         f.debug_struct("ApiErrorDetails")
             .field("len", &self.fields.len())
-            .field("keys", &keys)
+            .field("keys", &"[REDACTED]")
             .field("values", &"[REDACTED]")
             .finish()
     }
@@ -472,6 +496,10 @@ pub mod codes {
     #[must_use]
     pub fn is_inbound_only_error(code: &str) -> bool {
         code == INBOUND_ONLY_NO_PRIOR_INBOUND
+    }
+
+    pub(crate) fn is_known(code: &str) -> bool {
+        is_quota_error(code) || is_reply_target_error(code) || is_inbound_only_error(code)
     }
 }
 
@@ -562,7 +590,10 @@ mod tests {
     #[test]
     fn api_error_debug_redacts_server_message_and_detail_values() {
         let mut fields = Map::new();
-        fields.insert("external_id".to_owned(), Value::from("secret-ish-context"));
+        fields.insert(
+            "secret-ish-field-name".to_owned(),
+            Value::from("secret-ish-context"),
+        );
         let err = Error::Api(ApiError::from_schema(
             403,
             Some(codes::INBOUND_ONLY_NO_PRIOR_INBOUND.to_owned()),
@@ -576,8 +607,28 @@ mod tests {
         let display = err.to_string();
         assert!(!debug.contains("sk-secret-123"));
         assert!(!debug.contains("secret-ish-context"));
+        assert!(!debug.contains("secret-ish-field-name"));
         assert!(!display.contains("sk-secret-123"));
         assert!(!display.contains("secret-ish-context"));
+    }
+
+    #[test]
+    fn api_error_formatting_redacts_unknown_code_and_error_values() {
+        let err = Error::Api(ApiError::from_schema(
+            400,
+            Some("reflected-sk-secret-code".to_owned()),
+            Some("reflected-sk-secret-error".to_owned()),
+            None,
+            ApiErrorDetails::default(),
+            None,
+        ));
+        let display = err.to_string();
+        let debug = format!("{err:?}");
+        for secret in ["reflected-sk-secret-code", "reflected-sk-secret-error"] {
+            assert!(!display.contains(secret));
+            assert!(!debug.contains(secret));
+        }
+        assert_eq!(err.code(), Some("reflected-sk-secret-code"));
     }
 
     #[test]

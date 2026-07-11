@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Send group icons as multipart file uploads, preserve documented reply and
+  background metadata, and allow contact names to be cleared with JSON `null`.
+- Restrict automatic retries to safe or explicitly opted-in operations and make
+  paginator metadata authoritative over short-page heuristics.
+- Align async and blocking redirect, TLS, response-size, configuration, and
+  request-build error behavior.
+- Redact API-provided error labels from implicit formatting and tracing.
+- Keep webhooks-only builds and documentation clean under strict warnings.
+- Reject mismatched IDs on scoped resource handles, accept missing optional
+  response arrays as empty, and use the current webhook signature header while
+  retaining legacy-header compatibility.
+- Make `Secret<T>` honor the `Zeroize` contract as well as zeroizing on drop.
+
+### Changed
+
+- Added fallible `try_from_config_and_http_client` and
+  `try_from_config_and_agent` constructors while retaining the existing
+  infallible constructors for source compatibility.
+- `native-tls` takes precedence when both TLS backend features are enabled.
+- The non-default `sensitive-diagnostics` feature can explicitly emit raw
+  protocol snapshots to the `blooio::sensitive` tracing target.
+
 ## [1.0.2] - 2026-07-05
 
 ### Changed

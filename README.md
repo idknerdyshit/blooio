@@ -15,12 +15,12 @@ from a single sans-IO core. Sync users pull no async runtime.
 | `async`                   |   ✅    | The async [`Client`] executor (reqwest).                  |
 | `sync`                    |         | The blocking `BlockingClient` executor (ureq), no tokio.  |
 | `rustls`                  |   ✅    | TLS via rustls.                                           |
-| `native-tls`              |         | TLS via the system's native stack.                        |
+| `native-tls`              |         | TLS via the system's native stack; takes precedence if both TLS features are enabled. |
 | `webhooks`                |   ✅    | Typed webhook payloads + HMAC signature verification, usable without HTTP clients. |
 | `axum`                    |         | Verified axum webhook extractor; implies `webhooks`.      |
 | `actix`                   |         | Verified actix-web webhook extractor; implies `webhooks`. |
 | `tracing`                 |   ✅    | Secret-redacted request instrumentation.                  |
-| `sensitive-diagnostics`   |         | Explicit raw request/response inspection hooks for local debugging. |
+| `sensitive-diagnostics`   |         | Explicit raw request/response inspection and tracing for local debugging. |
 
 At least one of `async` / `sync` / `webhooks` must be enabled (enforced at
 compile time).
@@ -160,9 +160,11 @@ let chats = account.chats().list_all().stream().try_collect::<Vec<_>>().await?;
 # Ok(()) }
 ```
 
-Paginator helpers request 50 items per page. They stop after an empty page, a
-short page, a page whose `pagination.total` has been reached, or the first
-error. Use `list_with`/`list_messages_with` style methods when you need explicit
+Paginator helpers request 50 items per page. They stop after an empty page,
+when `pagination.has_more` is `false`, when `pagination.total` has been reached,
+after a short page without contrary metadata, or on the first error. Server
+pagination metadata takes precedence over the short-page heuristic. Use
+`list_with`/`list_messages_with` style methods when you need explicit
 `limit`/`offset` control instead of the default walk.
 
 ### Escape hatch
@@ -221,7 +223,8 @@ let config = ClientConfig::new()
     .with_base_url("https://backend.blooio.com/v2/api")
     .with_timeout(Duration::from_secs(10))
     .with_user_agent("my-app/1.0");
-let client = Client::from_config(config)?;
+let client = Client::from_config(config)?
+    .with_max_response_body_bytes(8 * 1024 * 1024);
 let creds = BlooioCreds::new("my-api-key");
 let account = client.account(&creds);
 # Ok(()) }
@@ -237,7 +240,7 @@ use blooio::{Client, ClientConfig};
 
 # fn demo(http: reqwest::Client) -> blooio::Result<()> {
 let config = ClientConfig::new();
-let client = Client::from_config_and_http_client(config, http);
+let client = Client::try_from_config_and_http_client(config, http)?;
 # Ok(()) }
 ```
 
@@ -247,7 +250,9 @@ cleartext.
 
 ### Retries and rate limits
 
-Transient failures are retried by default with jittered backoff. Unknown or
+Transient failures from safe read operations are retried by default with
+jittered backoff. Mutating operations retry only when their `Operation`
+implementation explicitly declares that doing so is safe. Unknown or
 no-code `429` responses are treated as transient, but documented quota/cap
 `429` errors are not retried by default. Customize retry behavior with
 `ClientConfig::with_retry`, or pass `RetryPolicy::none()` to disable it.
@@ -281,7 +286,9 @@ let me = account
 Per-request timeout applies to each HTTP attempt, including retries. Async
 callers can cancel the whole operation by dropping the future or wrapping it in
 `tokio::time::timeout`; blocking callers get timeout control but not external
-cancellation.
+cancellation. Both executors enforce the same configurable in-memory response
+body limit (64 MiB by default); override it on the client or for one request
+with `RequestOptions::max_response_body_bytes`.
 
 Use `send_with_meta` to inspect response metadata such as rate-limit headers and
 `Retry-After`:
@@ -316,8 +323,38 @@ With the non-default `sensitive-diagnostics` feature, `ClientConfig` and
 request/response snapshots and raw transport error strings. This is intentionally
 dangerous: snapshots can contain API keys, URLs, phone numbers, message text,
 headers, request bodies, and response bodies. The feature never enables itself
-from environment variables, never writes to tracing/stdout/stderr, and its own
-`Debug` output remains redacted.
+from environment variables, and its own `Debug` output remains redacted.
+
+### Sensitive protocol tracing
+
+With the non-default `sensitive-diagnostics` feature, callers may explicitly
+emit complete request/response snapshots and raw transport errors through the
+`blooio::sensitive` tracing target. This includes authorization credentials,
+URLs and query strings, headers, bodies, phone numbers, and message text. It is
+for local protocol debugging only; do not enable it with a production log sink.
+
+It is disabled by default and cannot be enabled from environment variables:
+
+```rust,no_run
+use blooio::{Client, ClientConfig, RequestOptions};
+
+# async fn example() -> blooio::Result<()> {
+let client = Client::from_config(ClientConfig::new().with_sensitive_tracing())?;
+
+// Enable it for just one request instead of the whole client.
+let options = RequestOptions::new().sensitive_tracing();
+
+// Suppress a client-wide setting for one request.
+let safe_options = RequestOptions::new().without_sensitive_tracing();
+# let _ = (client, options, safe_options);
+# Ok(())
+# }
+```
+
+Request-level settings override the client default. Sensitive tracing is
+independent from the callback-based `SensitiveDiagnostics` sink; either or both
+may be enabled. Normal `blooio::trace` events, public errors, and `Debug` output
+remain redacted.
 
 ## Errors
 
@@ -348,7 +385,9 @@ server extractors:
 use blooio::webhook::{self, WebhookEvent};
 
 # fn handle(secret: &[u8], sig_header: &str, raw_body: &[u8]) -> blooio::Result<()> {
-// Verify the signature (constant-time, with replay protection).
+// Reject an oversized HTTP body before buffering it. The crate's recommended
+// default is webhook::DEFAULT_MAX_WEBHOOK_BODY_BYTES (256 KiB).
+// Then verify the HMAC in constant time and enforce timestamp freshness.
 webhook::verify_default(secret, sig_header, raw_body)?;
 
 // Parse the typed payload.
@@ -358,6 +397,13 @@ if let Some(kind) = event.kind() {
 }
 # Ok(()) }
 ```
+
+Timestamp freshness is not one-time replay protection: the same authentic
+delivery can be submitted repeatedly within the tolerance window. Deduplicate
+stable event/message IDs or make handlers idempotent when duplicates are
+harmful. The framework extractors enforce the recommended body limit while
+streaming; framework-agnostic callers must cap the HTTP body before buffering
+and calling `verify` or `WebhookEvent::parse`.
 
 If the webhook secret depends on fields inside the payload, parse the signature
 first, check timestamp freshness, peek only the untrusted routing fields, then
@@ -375,18 +421,26 @@ let sig = SignatureHeader::parse(sig_header)?;
 sig.check_tolerance(now(), DEFAULT_TOLERANCE_SECS)?;
 
 let peek = webhook::peek(raw_body)?;
-let Some(secret) = peek.internal_id.as_deref().and_then(lookup_secret) else {
-    return Ok(());
-};
+let resolved = peek.internal_id.as_deref().and_then(lookup_secret);
+let known_identifier = resolved.is_some();
+let secret = resolved.unwrap_or_else(|| b"non-production-dummy-secret".to_vec());
 
-webhook::verify_preparsed(&secret, &sig, raw_body)?;
+// Always perform HMAC verification, even for an unknown routing identifier,
+// and return the same unauthorized response for unknown IDs and bad HMACs.
+let verified = webhook::verify_preparsed(&secret, &sig, raw_body);
+if !known_identifier || verified.is_err() {
+    return Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "invalid webhook signature",
+    ).into());
+}
 let sms = WebhookEvent::parse(raw_body)?.try_into_received_sms()?;
 let _sender = sms.sender;
 # Ok(()) }
 ```
 
-The built-in extractors accept both `Blooio-Signature` and
-`x-blooio-signature` by default. Use `WebhookVerifier::with_header_name` to
+The built-in extractors accept both `x-blooio-signature` and the legacy
+`Blooio-Signature` by default. Use `WebhookVerifier::with_header_name` to
 replace that default lookup with a custom header.
 
 For an axum app, put a `WebhookVerifier` in router state and accept

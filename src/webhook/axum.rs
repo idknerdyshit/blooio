@@ -29,8 +29,8 @@ use futures_util::StreamExt as _;
 
 use crate::webhook::WebhookEvent;
 use crate::webhook::server::{
-    DEFAULT_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook, WebhookRejection,
-    WebhookVerificationResolver, WebhookVerifier, X_BLOOIO_SIGNATURE_HEADER,
+    DEFAULT_SIGNATURE_HEADER, LEGACY_SIGNATURE_HEADER, ResolvedWebhook, VerifiedWebhook,
+    WebhookRejection, WebhookVerificationResolver, WebhookVerifier,
 };
 use crate::webhook::signature::SignatureHeader;
 
@@ -59,7 +59,7 @@ where
 
 impl<S, R> FromRequest<S> for ResolvedWebhook<R>
 where
-    R: WebhookVerificationResolver + FromRef<S> + Send + Sync,
+    R: WebhookVerificationResolver + FromRef<S> + Send + Sync + 'static,
     R::Error: From<WebhookRejection> + IntoResponse,
     S: Send + Sync,
 {
@@ -69,7 +69,7 @@ where
         let signature = signature_header(
             req.headers(),
             DEFAULT_SIGNATURE_HEADER,
-            Some(X_BLOOIO_SIGNATURE_HEADER),
+            Some(LEGACY_SIGNATURE_HEADER),
         )
         .ok_or(WebhookRejection::MissingSignature)?;
         let signature =
@@ -136,4 +136,25 @@ async fn read_limited_body(body: Body, limit: usize) -> Result<Bytes, WebhookRej
         bytes.extend_from_slice(&chunk);
     }
     Ok(Bytes::from(bytes))
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn body_stream_error_is_not_reflected() {
+        let body = Body::from_stream(futures_util::stream::once(async {
+            Err::<Bytes, _>(std::io::Error::other("sentinel-secret-diagnostic"))
+        }));
+        let rejection = read_limited_body(body, 1024).await.unwrap_err();
+        assert!(!rejection.to_string().contains("sentinel-secret-diagnostic"));
+        assert!(!format!("{rejection:?}").contains("sentinel-secret-diagnostic"));
+    }
 }

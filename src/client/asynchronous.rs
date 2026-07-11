@@ -9,7 +9,7 @@ use crate::client::AttemptContext;
 use crate::client::sensitive::SensitiveAttempt;
 #[cfg(feature = "tracing")]
 use crate::client::trace::{self, OperationTrace};
-use crate::config::ClientConfig;
+use crate::config::{ClientConfig, DEFAULT_MAX_RESPONSE_BODY_BYTES};
 #[cfg(feature = "sensitive-diagnostics")]
 use crate::core::diagnostics::SensitiveTransportErrorStage;
 use crate::core::operation::Operation;
@@ -33,6 +33,7 @@ use crate::error::{Error, Result};
 pub struct Client {
     config: ClientConfig,
     http: reqwest::Client,
+    max_response_body_bytes: usize,
 }
 
 /// Account-scoped asynchronous Blooio API handle.
@@ -58,12 +59,17 @@ impl Client {
 
     /// Build a client from a full [`ClientConfig`].
     pub fn from_config(config: ClientConfig) -> Result<Self> {
-        let http = reqwest::Client::builder()
+        config.validate()?;
+        let builder = reqwest::Client::builder()
             .timeout(config.timeout)
             .user_agent(config.user_agent.clone())
-            .build()
-            .map_err(Error::reqwest_transport)?;
-        Ok(Self::from_config_and_http_client(config, http))
+            .redirect(reqwest::redirect::Policy::none());
+        #[cfg(feature = "native-tls")]
+        let builder = builder.tls_backend_native();
+        #[cfg(all(feature = "rustls", not(feature = "native-tls")))]
+        let builder = builder.tls_backend_rustls();
+        let http = builder.build().map_err(Error::reqwest_transport)?;
+        Self::try_from_config_and_http_client(config, http)
     }
 
     /// Build a client from configuration and a caller-provided [`reqwest::Client`].
@@ -72,8 +78,32 @@ impl Client {
     /// DNS resolver, and middleware-compatible timeout policy. The supplied
     /// client is used as-is; values such as [`ClientConfig::timeout`] and
     /// [`ClientConfig::user_agent`] are not applied to it by this constructor.
+    /// Use [`Self::try_from_config_and_http_client`] when configuration should
+    /// be validated before construction.
+    #[must_use]
     pub fn from_config_and_http_client(config: ClientConfig, http: reqwest::Client) -> Self {
-        Client { config, http }
+        Client {
+            config,
+            http,
+            max_response_body_bytes: DEFAULT_MAX_RESPONSE_BODY_BYTES,
+        }
+    }
+
+    /// Build a client from configuration and a caller-provided transport,
+    /// validating the configuration first.
+    pub fn try_from_config_and_http_client(
+        config: ClientConfig,
+        http: reqwest::Client,
+    ) -> Result<Self> {
+        config.validate()?;
+        Ok(Self::from_config_and_http_client(config, http))
+    }
+
+    /// Override the maximum response body size retained in memory.
+    #[must_use]
+    pub fn with_max_response_body_bytes(mut self, max_response_body_bytes: usize) -> Self {
+        self.max_response_body_bytes = max_response_body_bytes;
+        self
     }
 
     /// The configuration this client was built with.
@@ -145,7 +175,16 @@ impl BlooioAccount<'_> {
         op: O,
         options: RequestOptions,
     ) -> Result<ApiResponse<O::Output>> {
-        let retry = options.retry_or(self.client.config.retry);
+        options.validate_base_url()?;
+        let operation_retry_safe = matches!(
+            O::METHOD,
+            http::Method::GET | http::Method::HEAD | http::Method::OPTIONS
+        ) || O::RETRY_SAFE;
+        let retry = if operation_retry_safe {
+            options.retry_or(self.client.config.retry)
+        } else {
+            crate::RetryPolicy::none()
+        };
         let max_retries = retry.max_retries;
         let operation_type = std::any::type_name::<O>();
         #[cfg(feature = "tracing")]
@@ -162,7 +201,7 @@ impl BlooioAccount<'_> {
         };
         spec.apply_options(&options);
         // A retried mutating request must be idempotent.
-        if max_retries > 0 {
+        if max_retries > 0 && O::RETRY_SAFE {
             spec.ensure_idempotency_key();
         }
         let url = url_with_query(
@@ -282,6 +321,9 @@ impl Client {
         let send = Self::execute_request(
             &self.http,
             req,
+            ctx.options
+                .max_response_body_bytes
+                .unwrap_or(self.max_response_body_bytes),
             #[cfg(feature = "sensitive-diagnostics")]
             &sensitive,
         );
@@ -306,6 +348,7 @@ impl Client {
     async fn execute_request(
         http: &reqwest::Client,
         req: reqwest::RequestBuilder,
+        max_response_body_bytes: usize,
         #[cfg(feature = "sensitive-diagnostics")] sensitive: &SensitiveAttempt<'_>,
     ) -> Result<RawResponse> {
         let req = match req.build() {
@@ -314,28 +357,43 @@ impl Client {
                 #[cfg(feature = "sensitive-diagnostics")]
                 sensitive
                     .transport_error(SensitiveTransportErrorStage::BuildRequest, e.to_string());
-                return Err(Error::reqwest_transport(e));
+                #[cfg(not(feature = "sensitive-diagnostics"))]
+                let _ = e;
+                return Err(Error::request_build());
             }
         };
 
         #[cfg(feature = "sensitive-diagnostics")]
         sensitive.request();
         match http.execute(req).await {
-            Ok(resp) => {
+            Ok(mut resp) => {
                 let status = resp.status().as_u16();
                 let headers = resp.headers().clone();
-                match resp.bytes().await {
-                    Ok(bytes) => {
-                        let raw = RawResponse::new(status, headers, bytes);
-                        #[cfg(feature = "sensitive-diagnostics")]
-                        sensitive.response(&raw);
-                        Ok(raw)
-                    }
-                    Err(e) => {
-                        #[cfg(feature = "sensitive-diagnostics")]
-                        sensitive
-                            .transport_error(SensitiveTransportErrorStage::ReadBody, e.to_string());
-                        Err(Error::reqwest_transport(e))
+                let mut bytes = bytes::BytesMut::new();
+                loop {
+                    match resp.chunk().await {
+                        Ok(Some(chunk)) => {
+                            if bytes.len().saturating_add(chunk.len()) > max_response_body_bytes {
+                                return Err(Error::ResponseBodyTooLarge {
+                                    limit: max_response_body_bytes,
+                                });
+                            }
+                            bytes.extend_from_slice(&chunk);
+                        }
+                        Ok(None) => {
+                            let raw = RawResponse::new(status, headers, bytes.freeze());
+                            #[cfg(feature = "sensitive-diagnostics")]
+                            sensitive.response(&raw);
+                            return Ok(raw);
+                        }
+                        Err(e) => {
+                            #[cfg(feature = "sensitive-diagnostics")]
+                            sensitive.transport_error(
+                                SensitiveTransportErrorStage::ReadBody,
+                                e.to_string(),
+                            );
+                            return Err(Error::reqwest_transport(e));
+                        }
                     }
                 }
             }

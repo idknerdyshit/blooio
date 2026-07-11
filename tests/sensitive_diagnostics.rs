@@ -12,6 +12,8 @@
     clippy::unreadable_literal
 )]
 
+use std::collections::BTreeMap;
+use std::fmt;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -26,6 +28,11 @@ use blooio::{
     BlooioCreds, ClientConfig, RequestOptions, RetryPolicy, SensitiveDiagnosticEvent,
     SensitiveDiagnostics, SensitiveTransportErrorStage,
 };
+use tracing::field::{Field, Visit};
+use tracing::{Event, Subscriber};
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::{Context, SubscriberExt};
+use tracing_subscriber::registry::LookupSpan;
 
 const API_KEY: &str = "test-key-sensitive-diagnostics";
 const TRACE_LABEL: &str = "trace-sensitive-label";
@@ -35,8 +42,103 @@ const QUERY_SECRET: &str = "query-secret";
 const HEADER_SECRET: &str = "header-secret";
 const IDEMPOTENCY_SECRET: &str = "idem-secret";
 const RESPONSE_SECRET: &str = "response-secret";
+const SENSITIVE_TRACE_TARGET: &str = "blooio::sensitive";
 
 type EventCapture = Arc<Mutex<Vec<SensitiveDiagnosticEvent>>>;
+
+#[derive(Clone, Debug)]
+struct CapturedTraceEvent {
+    level: String,
+    fields: BTreeMap<String, String>,
+}
+
+impl CapturedTraceEvent {
+    fn field(&self, key: &str) -> &str {
+        self.fields.get(key).map_or_else(
+            || panic!("missing trace field {key}: {self:#?}"),
+            String::as_str,
+        )
+    }
+}
+
+#[derive(Clone, Default)]
+struct SensitiveTraceCapture {
+    events: Arc<Mutex<Vec<CapturedTraceEvent>>>,
+}
+
+impl SensitiveTraceCapture {
+    fn events_named(&self, name: &str) -> Vec<CapturedTraceEvent> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| event.field("event") == name)
+            .cloned()
+            .collect()
+    }
+}
+
+#[derive(Default)]
+struct FieldVisitor {
+    fields: BTreeMap<String, String>,
+}
+
+impl Visit for FieldVisitor {
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.fields
+            .insert(field.name().to_owned(), value.to_string());
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.fields
+            .insert(field.name().to_owned(), value.to_string());
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.fields
+            .insert(field.name().to_owned(), value.to_owned());
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.fields
+            .insert(field.name().to_owned(), format!("{value:?}"));
+    }
+}
+
+struct SensitiveTraceLayer {
+    capture: SensitiveTraceCapture,
+}
+
+impl<S> Layer<S> for SensitiveTraceLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        if event.metadata().target() != SENSITIVE_TRACE_TARGET {
+            return;
+        }
+
+        let mut visitor = FieldVisitor::default();
+        event.record(&mut visitor);
+        self.capture
+            .events
+            .lock()
+            .unwrap()
+            .push(CapturedTraceEvent {
+                level: event.metadata().level().to_string(),
+                fields: visitor.fields,
+            });
+    }
+}
+
+fn capture_sensitive_traces() -> (SensitiveTraceCapture, impl Drop) {
+    let capture = SensitiveTraceCapture::default();
+    let subscriber = tracing_subscriber::registry().with(SensitiveTraceLayer {
+        capture: capture.clone(),
+    });
+    let guard = tracing::subscriber::set_default(subscriber);
+    (capture, guard)
+}
 
 fn capture() -> (SensitiveDiagnostics, EventCapture) {
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -113,6 +215,17 @@ fn retry_config(base_url: impl Into<String>, diagnostics: SensitiveDiagnostics) 
                 .with_jitter(false),
         )
         .with_sensitive_diagnostics(diagnostics)
+}
+
+fn tracing_config(base_url: impl Into<String>, enabled: bool) -> ClientConfig {
+    let config = ClientConfig::new()
+        .with_base_url(base_url)
+        .with_retry(RetryPolicy::none());
+    if enabled {
+        config.with_sensitive_tracing()
+    } else {
+        config
+    }
 }
 
 fn test_creds() -> BlooioCreds {
@@ -243,6 +356,8 @@ fn assert_transport_error_events(events: &[SensitiveDiagnosticEvent], err: &bloo
 }
 
 fn assert_build_error_events(events: &[SensitiveDiagnosticEvent], err: &blooio::Error) {
+    assert!(matches!(err, blooio::Error::RequestBuild));
+    assert!(!err.is_retryable());
     assert_eq!(events.len(), 1, "{events:#?}");
     let SensitiveDiagnosticEvent::TransportError(error) = &events[0] else {
         panic!("expected transport error event: {events:#?}");
@@ -264,6 +379,30 @@ fn assert_header(headers: &[(String, String)], name: &str, expected: &str) {
         panic!("missing header {name}: {headers:#?}");
     };
     assert_eq!(value, expected);
+}
+
+fn assert_trace_request_response(events: &[CapturedTraceEvent], base_url: &str) {
+    assert_eq!(events.len(), 2, "{events:#?}");
+    let request = &events[0];
+    assert_eq!(request.level, "DEBUG");
+    assert_eq!(request.field("event"), "blooio.sensitive.request");
+    assert_eq!(request.field("method"), "POST");
+    assert_eq!(request.field("attempt"), "1");
+    assert_eq!(request.field("max_retries"), "0");
+    assert!(request.field("operation").contains("SendMessage"));
+    assert!(request.field("url").contains(base_url));
+    assert!(request.field("url").contains(QUERY_SECRET));
+    assert!(request.field("headers").contains(API_KEY));
+    assert!(request.field("headers").contains(HEADER_SECRET));
+    assert!(request.field("body").contains(MESSAGE_TEXT));
+    assert!(request.field("trace_label").contains(TRACE_LABEL));
+
+    let response = &events[1];
+    assert_eq!(response.level, "DEBUG");
+    assert_eq!(response.field("event"), "blooio.sensitive.response");
+    assert_eq!(response.field("status"), "200");
+    assert!(response.field("url").contains(base_url));
+    assert!(response.field("body").contains("message-secret"));
 }
 
 #[cfg(feature = "async")]
@@ -479,4 +618,233 @@ fn blocking_retries_emit_request_and_response_for_each_attempt() {
     let _me = client.account(&creds).me().get().unwrap();
 
     assert_retry_events(&captured(&events), &base_url);
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn async_sensitive_tracing_respects_client_and_request_overrides() {
+    let base_url = sequence_server(vec![
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+    ]);
+    let enabled = Client::from_config(tracing_config(base_url.clone(), true)).unwrap();
+    let disabled = Client::from_config(tracing_config(base_url.clone(), false)).unwrap();
+    let creds = test_creds();
+    let (capture, _guard) = capture_sensitive_traces();
+
+    let _sent = disabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()),
+        )
+        .await
+        .unwrap();
+    assert!(capture.events.lock().unwrap().is_empty());
+    let _sent = enabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()).without_sensitive_tracing(),
+        )
+        .await
+        .unwrap();
+    assert!(capture.events.lock().unwrap().is_empty());
+    let _sent = enabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()),
+        )
+        .await
+        .unwrap();
+    let _sent = disabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()).sensitive_tracing(),
+        )
+        .await
+        .unwrap();
+
+    let events = capture.events.lock().unwrap().clone();
+    assert_trace_request_response(&events[..2], &base_url);
+    assert_trace_request_response(&events[2..], &base_url);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn blocking_sensitive_tracing_respects_client_and_request_overrides() {
+    let base_url = sequence_server(vec![
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+        response(
+            200,
+            &[("x-sensitive-response", RESPONSE_SECRET)],
+            r#"{"message_id":"message-secret"}"#,
+        ),
+    ]);
+    let enabled = BlockingClient::from_config(tracing_config(base_url.clone(), true)).unwrap();
+    let disabled = BlockingClient::from_config(tracing_config(base_url.clone(), false)).unwrap();
+    let creds = test_creds();
+    let (capture, _guard) = capture_sensitive_traces();
+
+    let _sent = disabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()),
+        )
+        .unwrap();
+    assert!(capture.events.lock().unwrap().is_empty());
+    let _sent = enabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()).without_sensitive_tracing(),
+        )
+        .unwrap();
+    assert!(capture.events.lock().unwrap().is_empty());
+    let _sent = enabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()),
+        )
+        .unwrap();
+    let _sent = disabled
+        .account(&creds)
+        .send_with_options(
+            send_message(),
+            send_message_options(SensitiveDiagnostics::noop()).sensitive_tracing(),
+        )
+        .unwrap();
+
+    let events = capture.events.lock().unwrap().clone();
+    assert_trace_request_response(&events[..2], &base_url);
+    assert_trace_request_response(&events[2..], &base_url);
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn async_sensitive_tracing_and_callback_diagnostics_are_independent() {
+    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (diagnostics, callback_events) = capture();
+    let client =
+        Client::from_config(tracing_config(base_url, true).with_sensitive_diagnostics(diagnostics))
+            .unwrap();
+    let creds = test_creds();
+    let (trace_events, _guard) = capture_sensitive_traces();
+
+    let _me = client.account(&creds).me().get().await.unwrap();
+
+    assert_eq!(captured(&callback_events).len(), 2);
+    assert_eq!(
+        trace_events.events_named("blooio.sensitive.request").len(),
+        1
+    );
+    assert_eq!(
+        trace_events.events_named("blooio.sensitive.response").len(),
+        1
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn blocking_sensitive_tracing_and_callback_diagnostics_are_independent() {
+    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (diagnostics, callback_events) = capture();
+    let client = BlockingClient::from_config(
+        tracing_config(base_url, true).with_sensitive_diagnostics(diagnostics),
+    )
+    .unwrap();
+    let creds = test_creds();
+    let (trace_events, _guard) = capture_sensitive_traces();
+
+    let _me = client.account(&creds).me().get().unwrap();
+
+    assert_eq!(captured(&callback_events).len(), 2);
+    assert_eq!(
+        trace_events.events_named("blooio.sensitive.request").len(),
+        1
+    );
+    assert_eq!(
+        trace_events.events_named("blooio.sensitive.response").len(),
+        1
+    );
+}
+
+#[cfg(feature = "async")]
+#[tokio::test]
+async fn async_sensitive_tracing_captures_retries_and_transport_errors() {
+    let base_url = sequence_server(vec![
+        response(503, &[], r#"{"error":"retry response-secret"}"#),
+        response(200, &[], r#"{"valid":true}"#),
+    ]);
+    let client = Client::from_config(
+        ClientConfig::new()
+            .with_base_url(base_url.clone())
+            .with_retry(
+                RetryPolicy::default()
+                    .with_max_retries(1)
+                    .with_base_delay(Duration::from_millis(0))
+                    .with_jitter(false),
+            )
+            .with_sensitive_tracing(),
+    )
+    .unwrap();
+    let creds = test_creds();
+    let (capture, guard) = capture_sensitive_traces();
+
+    let _me = client.account(&creds).me().get().await.unwrap();
+
+    let responses = capture.events_named("blooio.sensitive.response");
+    assert_eq!(responses.len(), 2, "{responses:#?}");
+    assert_eq!(responses[0].field("status"), "503");
+    assert_eq!(responses[1].field("status"), "200");
+    assert!(responses[0].field("body").contains(RESPONSE_SECRET));
+
+    drop(guard);
+    let failed_base_url = unused_base_url();
+    let failed_client = Client::from_config(tracing_config(failed_base_url.clone(), true)).unwrap();
+    let (capture, _guard) = capture_sensitive_traces();
+    let _err = failed_client.account(&creds).me().get().await.unwrap_err();
+
+    let errors = capture.events_named("blooio.sensitive.transport_error");
+    assert_eq!(errors.len(), 1, "{errors:#?}");
+    assert_eq!(errors[0].level, "WARN");
+    assert!(errors[0].field("url").contains(&failed_base_url));
+    assert!(errors[0].field("headers").contains(API_KEY));
+    assert!(!errors[0].field("error").is_empty());
 }

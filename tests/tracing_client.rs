@@ -380,7 +380,7 @@ fn assert_api_failure_capture(capture: &TraceCapture) {
     assert_eq!(failure.field("attempts"), "1");
     assert_eq!(failure.field("max_retries"), "0");
     assert_eq!(failure.field("status"), "400");
-    assert_eq!(failure.field("code"), "invalid_request");
+    assert!(!failure.fields.contains_key("code"));
     assert_eq!(failure.field("error_kind"), "api");
     failure.assert_elapsed();
 }
@@ -403,7 +403,7 @@ fn assert_retry_success_capture(capture: &TraceCapture) {
     assert_eq!(retry.field("delay_source"), "retry_after");
     assert_eq!(retry.field("error_kind"), "api");
     assert_eq!(retry.field("status"), "503");
-    assert_eq!(retry.field("code"), "temporarily_unavailable");
+    assert!(!retry.fields.contains_key("code"));
     assert_eq!(retry.field("retry_after_ms"), "0");
 
     let success = capture.one_event("blooio.operation.success");

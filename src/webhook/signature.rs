@@ -3,7 +3,8 @@
 //! The signature header has the form `t=<unix_seconds>,v1=<hex_hmac>`. The
 //! signed payload is `"{t}.{raw_body}"`, and `v1` is the lowercase hex
 //! `HMAC-SHA256(secret, signed_payload)`. Verification is constant-time and
-//! rejects timestamps outside a tolerance window to prevent replay.
+//! rejects timestamps outside a freshness window. Applications still need
+//! deduplication when repeated delivery within that window would be harmful.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -13,7 +14,7 @@ use subtle::ConstantTimeEq;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Default replay-protection tolerance, in seconds.
+/// Default signature timestamp freshness tolerance, in seconds.
 pub const DEFAULT_TOLERANCE_SECS: u64 = 300;
 
 /// Why a webhook signature failed to verify.
@@ -81,6 +82,9 @@ impl SignatureHeader {
 
     /// Check that this signature timestamp is within `tolerance_secs` of
     /// caller-supplied Unix timestamp `now`.
+    ///
+    /// This freshness check does not detect repeated delivery of the same
+    /// valid signature within the window.
     pub fn check_tolerance(&self, now: i64, tolerance_secs: u64) -> Result<(), VerifyError> {
         if now.abs_diff(self.timestamp) > tolerance_secs {
             Err(VerifyError::TimestampOutOfTolerance {
@@ -115,6 +119,8 @@ fn duration_to_unix(duration: Duration) -> Result<i64, VerifyError> {
 /// `secret` is the webhook signing secret, `header_value` the raw signature
 /// header, and `raw_body` the **unparsed** request body bytes. Returns `Ok(())`
 /// if a provided signature matches and the timestamp is within `tolerance`.
+/// Applications must deduplicate event identifiers or use idempotent handlers
+/// if replay within that window would be harmful.
 pub fn verify(
     secret: &[u8],
     header_value: &str,
@@ -149,8 +155,8 @@ pub fn verify_at(
 /// Verify a webhook signature that has already been parsed and timestamp
 /// checked.
 ///
-/// This is useful when an application needs to parse the signature, perform
-/// replay protection, inspect untrusted routing fields, look up the
+/// This is useful when an application needs to parse the signature, check
+/// timestamp freshness, inspect untrusted routing fields, look up the
 /// org-specific secret, and only then verify the HMAC.
 pub fn verify_preparsed(
     secret: &[u8],

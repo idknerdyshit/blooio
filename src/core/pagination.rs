@@ -68,18 +68,27 @@ impl Cursor {
     /// Apply a fetched page and return its items, updating the cursor.
     fn advance<T>(&mut self, page: Page<T>) -> Vec<T> {
         let got = u32::try_from(page.items.len()).unwrap_or(u32::MAX);
-        self.offset += got;
-        let reached_total = page
+        self.offset = self.offset.saturating_add(got);
+        let has_more = page.pagination.as_ref().and_then(|p| p.has_more);
+        let total = page.pagination.as_ref().and_then(|p| p.total);
+        let effective_limit = page
             .pagination
             .as_ref()
-            .and_then(|p| p.total)
-            .is_some_and(|total| i64::from(self.offset) >= total);
-        let has_no_more = page
-            .pagination
-            .as_ref()
-            .and_then(|p| p.has_more)
-            .is_some_and(|has_more| !has_more);
-        if got < self.limit.get() || got == 0 || reached_total || has_no_more {
+            .and_then(|p| p.limit)
+            .and_then(|limit| u32::try_from(limit).ok())
+            .filter(|limit| *limit > 0)
+            .unwrap_or(self.limit.get());
+
+        let done = if got == 0 {
+            true
+        } else if let Some(has_more) = has_more {
+            !has_more
+        } else if let Some(total) = total {
+            i64::from(self.offset) >= total
+        } else {
+            got < effective_limit
+        };
+        if done {
             self.done = true;
         }
         page.items
@@ -91,9 +100,10 @@ impl Cursor {
 /// `make` builds the list operation for a given `(offset, limit)`.
 ///
 /// Resource `*_all` helpers use [`DEFAULT_PAGE_SIZE`] and stop when the API
-/// returns an empty page, a page shorter than the requested limit, metadata
-/// showing `pagination.total` has been reached, metadata showing
-/// `pagination.has_more` is `false`, or the first fetch error.
+/// returns an empty page, metadata showing `pagination.total` has been
+/// reached, metadata showing `pagination.has_more` is `false`, or the first
+/// fetch error. When neither `total` nor `has_more` is present, a page shorter
+/// than the effective page limit ends pagination.
 pub struct Paginator<C, F, O>
 where
     F: Fn(u32, u32) -> O,
@@ -325,6 +335,62 @@ mod tests {
         };
         c.advance(page);
         assert_eq!(c.offset, 2);
+        assert!(c.done);
+    }
+
+    #[test]
+    fn cursor_continues_when_has_more_is_true_on_short_page() {
+        let mut c = Cursor::new(nz(50));
+        c.advance(Page {
+            items: vec![1, 2, 3],
+            pagination: Some(Pagination {
+                has_more: Some(true),
+                ..Default::default()
+            }),
+        });
+        assert_eq!(c.offset, 3);
+        assert!(!c.done);
+    }
+
+    #[test]
+    fn cursor_continues_on_short_page_when_total_is_unreached() {
+        let mut c = Cursor::new(nz(50));
+        c.advance(Page {
+            items: (0..25).collect::<Vec<_>>(),
+            pagination: Some(Pagination {
+                total: Some(100),
+                ..Default::default()
+            }),
+        });
+        assert_eq!(c.offset, 25);
+        assert!(!c.done);
+    }
+
+    #[test]
+    fn cursor_uses_server_reported_page_limit() {
+        let mut c = Cursor::new(nz(50));
+        c.advance(Page {
+            items: (0..25).collect::<Vec<_>>(),
+            pagination: Some(Pagination {
+                limit: Some(25),
+                total: Some(100),
+                ..Default::default()
+            }),
+        });
+        assert_eq!(c.offset, 25);
+        assert!(!c.done);
+    }
+
+    #[test]
+    fn cursor_stops_on_empty_page_even_when_has_more_is_true() {
+        let mut c = Cursor::new(nz(50));
+        c.advance(Page::<u8> {
+            items: Vec::new(),
+            pagination: Some(Pagination {
+                has_more: Some(true),
+                ..Default::default()
+            }),
+        });
         assert!(c.done);
     }
 

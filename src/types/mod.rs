@@ -218,6 +218,7 @@ pub struct ChatBackgroundResponse {
     pub has_background: Option<bool>,
     pub background_id: Option<String>,
     pub background_version: Option<i64>,
+    pub background_url: Option<String>,
     pub changed: Option<bool>,
 }
 
@@ -291,6 +292,7 @@ pub struct WebhookEventPayload {
     pub read_at: Option<i64>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    pub reply_to: Option<ReplyToInfo>,
 }
 
 /// Summary of the most recent message in a chat.
@@ -326,6 +328,18 @@ pub struct Chat {
     pub last_inbound_time: Option<i64>,
     pub last_outbound_time: Option<i64>,
     pub last_message: Option<LastMessage>,
+    pub background_id: Option<String>,
+    pub background_url: Option<String>,
+}
+
+/// Parent-message metadata returned for an inline reply.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
+pub struct ReplyToInfo {
+    pub message_id: Option<String>,
+    pub guid: Option<String>,
+    pub part_index: Option<u32>,
 }
 
 /// A reaction on a message.
@@ -357,6 +371,7 @@ pub struct Message {
     pub status: Option<String>,
     pub protocol: Option<String>,
     pub error: Option<String>,
+    pub reply_to: Option<ReplyToInfo>,
 }
 
 /// A message (detail view).
@@ -378,6 +393,7 @@ pub struct MessageDetail {
     pub status: Option<String>,
     pub protocol: Option<String>,
     pub error: Option<String>,
+    pub reply_to: Option<ReplyToInfo>,
 }
 
 /// Delivery status of a message.
@@ -465,5 +481,33 @@ impl SendMessageResponse {
         } else {
             Vec::new()
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::print_stdout
+)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_detail_preserves_reply_metadata() {
+        let detail: MessageDetail = serde_json::from_value(serde_json::json!({
+            "message_id": "m2",
+            "reply_to": {
+                "message_id": "m1",
+                "guid": "p:0/m1",
+                "part_index": 2
+            }
+        }))
+        .unwrap();
+        let reply = detail.reply_to.unwrap();
+        assert_eq!(reply.message_id.as_deref(), Some("m1"));
+        assert_eq!(reply.guid.as_deref(), Some("p:0/m1"));
+        assert_eq!(reply.part_index, Some(2));
     }
 }

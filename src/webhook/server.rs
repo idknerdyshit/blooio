@@ -10,17 +10,18 @@ use std::future::Future;
 
 use crate::error::Error;
 use crate::secret::Secret;
+pub use crate::webhook::DEFAULT_MAX_WEBHOOK_BODY_BYTES;
 use crate::webhook::WebhookEvent;
 use crate::webhook::signature::{self, DEFAULT_TOLERANCE_SECS, SignatureHeader, VerifyError};
 
-/// Default header name carrying the `t=…,v1=…` signature.
-pub const DEFAULT_SIGNATURE_HEADER: &str = "Blooio-Signature";
+/// Default signature header used by current Blooio webhook deliveries.
+pub const DEFAULT_SIGNATURE_HEADER: &str = "x-blooio-signature";
 
-/// Alternate signature header name used by Blooio webhook deliveries.
+/// Explicit name for the current Blooio signature header.
 pub const X_BLOOIO_SIGNATURE_HEADER: &str = "x-blooio-signature";
 
-/// Default maximum accepted webhook body size, in bytes.
-pub const DEFAULT_MAX_WEBHOOK_BODY_BYTES: usize = 262_144;
+/// Legacy signature header accepted for backward compatibility.
+pub const LEGACY_SIGNATURE_HEADER: &str = "Blooio-Signature";
 
 /// Holds the webhook signing secret (and verification options) so that the
 /// framework extractors can authenticate and parse an inbound request in one
@@ -56,7 +57,7 @@ impl WebhookVerifier {
         }
     }
 
-    /// Override the replay-protection tolerance window, in seconds.
+    /// Override the signature timestamp freshness window, in seconds.
     #[must_use]
     pub fn with_tolerance(mut self, tolerance_secs: u64) -> Self {
         self.tolerance = tolerance_secs;
@@ -85,12 +86,12 @@ impl WebhookVerifier {
     /// The alternate header name accepted by default extractors, if any.
     ///
     /// When the verifier uses the default [`DEFAULT_SIGNATURE_HEADER`],
-    /// extractors also accept [`X_BLOOIO_SIGNATURE_HEADER`]. Custom header
+    /// extractors also accept [`LEGACY_SIGNATURE_HEADER`]. Custom header
     /// names are treated as exact overrides.
     pub fn alternate_header_name(&self) -> Option<&'static str> {
         self.header_name
             .eq_ignore_ascii_case(DEFAULT_SIGNATURE_HEADER)
-            .then_some(X_BLOOIO_SIGNATURE_HEADER)
+            .then_some(LEGACY_SIGNATURE_HEADER)
     }
 
     /// The maximum accepted webhook body size, in bytes.
@@ -103,7 +104,9 @@ impl WebhookVerifier {
     ///
     /// `signature_header` is the raw header value (`None` if the header was
     /// absent). The body is verified *before* it is parsed, so a returned
-    /// event is always authentic.
+    /// event is always authentic. Timestamp freshness does not prevent a valid
+    /// event from being replayed within the tolerance window; deduplicate event
+    /// identifiers or make handlers idempotent when duplicates are harmful.
     pub fn verify_and_parse(
         &self,
         signature_header: Option<&str>,
@@ -146,7 +149,7 @@ pub trait WebhookVerificationResolver {
         DEFAULT_MAX_WEBHOOK_BODY_BYTES
     }
 
-    /// Replay-protection timestamp tolerance window, in seconds.
+    /// Signature timestamp freshness window, in seconds.
     fn tolerance_secs(&self) -> u64 {
         DEFAULT_TOLERANCE_SECS
     }
@@ -169,7 +172,6 @@ pub struct VerifiedWebhook(pub WebhookEvent);
 
 /// Why an inbound webhook could not be accepted. Each variant maps to an HTTP
 /// status via [`status_code`](WebhookRejection::status_code).
-#[derive(Debug)]
 #[non_exhaustive]
 pub enum WebhookRejection {
     /// The framework extractor was used without registering a verifier or
@@ -212,10 +214,28 @@ impl std::fmt::Display for WebhookRejection {
             WebhookRejection::MissingSignature => f.write_str("missing webhook signature header"),
             WebhookRejection::InvalidSignature(e) => write!(f, "invalid webhook signature: {e}"),
             WebhookRejection::Malformed(e) => write!(f, "malformed webhook body: {e}"),
-            WebhookRejection::BodyRead(e) => write!(f, "could not read webhook body: {e}"),
+            WebhookRejection::BodyRead(_) => f.write_str("could not read webhook body"),
             WebhookRejection::PayloadTooLarge { limit } => {
                 write!(f, "webhook body exceeds {limit} byte limit")
             }
+        }
+    }
+}
+
+impl std::fmt::Debug for WebhookRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingVerifier => f.write_str("MissingVerifier"),
+            Self::MissingSignature => f.write_str("MissingSignature"),
+            Self::InvalidSignature(error) => {
+                f.debug_tuple("InvalidSignature").field(error).finish()
+            }
+            Self::Malformed(error) => f.debug_tuple("Malformed").field(error).finish(),
+            Self::BodyRead(_) => f.debug_tuple("BodyRead").field(&"[REDACTED]").finish(),
+            Self::PayloadTooLarge { limit } => f
+                .debug_struct("PayloadTooLarge")
+                .field("limit", limit)
+                .finish(),
         }
     }
 }
@@ -289,14 +309,14 @@ mod tests {
     }
 
     #[test]
-    fn default_header_name_is_blooio_signature() {
+    fn default_header_name_is_x_blooio_signature() {
         assert_eq!(
             WebhookVerifier::new(SECRET).header_name(),
-            "Blooio-Signature"
+            "x-blooio-signature"
         );
         assert_eq!(
             WebhookVerifier::new(SECRET).alternate_header_name(),
-            Some("x-blooio-signature")
+            Some("Blooio-Signature")
         );
         assert_eq!(
             WebhookVerifier::new(SECRET)
@@ -316,6 +336,13 @@ mod tests {
                 .max_body_bytes(),
             1024
         );
+    }
+
+    #[test]
+    fn body_read_rejection_redacts_internal_error() {
+        let rejection = WebhookRejection::BodyRead("sentinel-secret-diagnostic".to_owned());
+        assert!(!rejection.to_string().contains("sentinel-secret-diagnostic"));
+        assert!(!format!("{rejection:?}").contains("sentinel-secret-diagnostic"));
     }
 
     #[test]

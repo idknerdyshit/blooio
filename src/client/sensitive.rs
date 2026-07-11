@@ -4,6 +4,7 @@ use crate::config::ClientConfig;
 use crate::core::diagnostics::{
     SensitiveDiagnosticEvent, SensitiveDiagnostics, SensitiveRequestSnapshot,
     SensitiveResponseSnapshot, SensitiveTransportErrorSnapshot, SensitiveTransportErrorStage,
+    emit_sensitive_trace,
 };
 use crate::core::options::RequestOptions;
 use crate::core::raw::RawResponse;
@@ -12,6 +13,7 @@ use crate::core::request::RequestSpec;
 #[derive(Debug)]
 pub(crate) struct SensitiveAttempt<'a> {
     diagnostics: Option<&'a SensitiveDiagnostics>,
+    sensitive_tracing: bool,
     request: Option<SensitiveRequestSnapshot>,
 }
 
@@ -34,7 +36,11 @@ impl<'a> SensitiveAttempt<'a> {
             .sensitive_diagnostics
             .as_ref()
             .or(parts.config.sensitive_diagnostics.as_ref());
-        let request = diagnostics.map(|_| {
+        let sensitive_tracing = parts
+            .options
+            .sensitive_tracing
+            .unwrap_or(parts.config.sensitive_tracing);
+        let request = (diagnostics.is_some() || sensitive_tracing).then(|| {
             SensitiveRequestSnapshot::from_spec(
                 parts.spec,
                 parts.url,
@@ -47,31 +53,41 @@ impl<'a> SensitiveAttempt<'a> {
         });
         Self {
             diagnostics,
+            sensitive_tracing,
             request,
         }
     }
 
+    fn record(&self, event: SensitiveDiagnosticEvent) {
+        if self.sensitive_tracing {
+            emit_sensitive_trace(&event);
+        }
+        if let Some(diagnostics) = self.diagnostics {
+            diagnostics.record(event);
+        }
+    }
+
     pub(crate) fn request(&self) {
-        let (Some(diagnostics), Some(request)) = (self.diagnostics, &self.request) else {
+        let Some(request) = &self.request else {
             return;
         };
-        diagnostics.record(SensitiveDiagnosticEvent::Request(request.clone()));
+        self.record(SensitiveDiagnosticEvent::Request(request.clone()));
     }
 
     pub(crate) fn response(&self, raw: &RawResponse) {
-        let (Some(diagnostics), Some(request)) = (self.diagnostics, &self.request) else {
+        let Some(request) = &self.request else {
             return;
         };
-        diagnostics.record(SensitiveDiagnosticEvent::Response(
+        self.record(SensitiveDiagnosticEvent::Response(
             SensitiveResponseSnapshot::from_raw(request, raw),
         ));
     }
 
     pub(crate) fn transport_error(&self, stage: SensitiveTransportErrorStage, error: String) {
-        let (Some(diagnostics), Some(request)) = (self.diagnostics, &self.request) else {
+        let Some(request) = &self.request else {
             return;
         };
-        diagnostics.record(SensitiveDiagnosticEvent::TransportError(
+        self.record(SensitiveDiagnosticEvent::TransportError(
             SensitiveTransportErrorSnapshot::new(request.clone(), stage, error),
         ));
     }

@@ -21,12 +21,15 @@ use crate::error::{Error, Result};
 pub struct RequestOptions {
     pub(crate) base_url: Option<String>,
     pub(crate) timeout: Option<Duration>,
+    pub(crate) max_response_body_bytes: Option<usize>,
     pub(crate) retry: Option<RetryPolicy>,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) query: Vec<(String, String)>,
     pub(crate) trace_label: Option<String>,
     #[cfg(feature = "sensitive-diagnostics")]
     pub(crate) sensitive_diagnostics: Option<SensitiveDiagnostics>,
+    #[cfg(feature = "sensitive-diagnostics")]
+    pub(crate) sensitive_tracing: Option<bool>,
 }
 
 impl RequestOptions {
@@ -69,6 +72,13 @@ impl RequestOptions {
     #[must_use]
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
+        self
+    }
+
+    /// Override the maximum response body size for this request.
+    #[must_use]
+    pub fn max_response_body_bytes(mut self, max_response_body_bytes: usize) -> Self {
+        self.max_response_body_bytes = Some(max_response_body_bytes);
         self
     }
 
@@ -143,8 +153,40 @@ impl RequestOptions {
         self
     }
 
+    /// Enable intentionally unredacted tracing for this request.
+    ///
+    /// This is available only with the `sensitive-diagnostics` feature. It
+    /// overrides the client default and emits complete request/response
+    /// snapshots and raw transport errors to the `blooio::sensitive` tracing
+    /// target. The emitted values can contain credentials, URLs, headers, and
+    /// bodies; use only for local protocol debugging.
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[must_use]
+    pub fn sensitive_tracing(mut self) -> Self {
+        self.sensitive_tracing = Some(true);
+        self
+    }
+
+    /// Disable intentionally unredacted tracing for this request.
+    ///
+    /// This overrides an enabled client default. The callback-based
+    /// [`SensitiveDiagnostics`] setting is independent.
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[must_use]
+    pub fn without_sensitive_tracing(mut self) -> Self {
+        self.sensitive_tracing = Some(false);
+        self
+    }
+
     pub(crate) fn retry_or(&self, fallback: RetryPolicy) -> RetryPolicy {
         self.retry.unwrap_or(fallback)
+    }
+
+    pub(crate) fn validate_base_url(&self) -> Result<()> {
+        if let Some(base_url) = &self.base_url {
+            crate::config::validate_base_url(base_url, "request base URL")?;
+        }
+        Ok(())
     }
 
     pub(crate) fn url_for(&self, fallback: &ClientConfig, path: &str) -> String {
@@ -172,6 +214,7 @@ impl fmt::Debug for RequestOptions {
                 ),
             )
             .field("timeout", &self.timeout)
+            .field("max_response_body_bytes", &self.max_response_body_bytes)
             .field("retry", &self.retry)
             .field(
                 "headers",
@@ -195,6 +238,18 @@ impl fmt::Debug for RequestOptions {
             &format_args!(
                 "{}",
                 if self.sensitive_diagnostics.is_some() {
+                    "Some([REDACTED])"
+                } else {
+                    "None"
+                }
+            ),
+        );
+        #[cfg(feature = "sensitive-diagnostics")]
+        debug.field(
+            "sensitive_tracing",
+            &format_args!(
+                "{}",
+                if self.sensitive_tracing.is_some() {
                     "Some([REDACTED])"
                 } else {
                     "None"
@@ -234,6 +289,14 @@ mod tests {
     }
 
     #[test]
+    fn trusted_base_url_is_revalidated_before_send() {
+        let options = RequestOptions::new().base_url("https://example.com/api?token=secret");
+        let err = options.validate_base_url().unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(!err.to_string().contains("secret"));
+    }
+
+    #[test]
     fn try_header_rejects_invalid_name() {
         let err = RequestOptions::new()
             .try_header("bad header", "value")
@@ -249,13 +312,17 @@ mod tests {
             .query("token", "also-secret")
             .trace_label("safe-but-redacted-label");
         #[cfg(feature = "sensitive-diagnostics")]
-        let options = options.sensitive_diagnostics(SensitiveDiagnostics::noop());
+        let options = options
+            .sensitive_diagnostics(SensitiveDiagnostics::noop())
+            .sensitive_tracing();
         let dbg = format!("{options:?}");
         assert!(!dbg.contains("secret"));
         assert!(!dbg.contains("secret.example"));
         assert!(!dbg.contains("safe-but-redacted-label"));
         #[cfg(feature = "sensitive-diagnostics")]
         assert!(dbg.contains("sensitive_diagnostics: Some([REDACTED])"));
+        #[cfg(feature = "sensitive-diagnostics")]
+        assert!(dbg.contains("sensitive_tracing: Some([REDACTED])"));
         assert!(dbg.contains("REDACTED"));
     }
 
@@ -265,5 +332,14 @@ mod tests {
             .trace_label("request-1")
             .trace_label("");
         assert_eq!(options.trace_label, None);
+    }
+
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[test]
+    fn sensitive_tracing_request_override_can_be_cleared() {
+        let options = RequestOptions::new()
+            .sensitive_tracing()
+            .without_sensitive_tracing();
+        assert_eq!(options.sensitive_tracing, Some(false));
     }
 }

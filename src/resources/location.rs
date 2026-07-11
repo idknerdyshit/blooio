@@ -15,6 +15,7 @@ use crate::error::Result;
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct LocationContactsResponse {
+    #[serde(default)]
     pub friends: Vec<crate::types::ContactLocation>,
 }
 

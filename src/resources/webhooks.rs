@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::secret::Secret;
 use crate::types::{Webhook, WebhookLog};
 
@@ -18,6 +18,7 @@ use crate::types::{Webhook, WebhookLog};
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ListWebhooksResponse {
+    #[serde(default)]
     pub webhooks: Vec<Webhook>,
 }
 
@@ -61,6 +62,7 @@ pub struct RotateSecretResponse {
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ListWebhookLogsResponse {
+    #[serde(default)]
     pub logs: Vec<WebhookLog>,
     pub pagination: Option<Pagination>,
 }
@@ -349,6 +351,18 @@ pub struct WebhookLogs<C> {
     pub(crate) webhook_id: String,
 }
 
+impl<C> WebhookLogs<C> {
+    fn validate_operation_webhook_id(&self, operation_webhook_id: &str) -> Result<()> {
+        if operation_webhook_id == self.webhook_id {
+            Ok(())
+        } else {
+            Err(Error::config(
+                "operation webhook_id does not match scoped webhook log handle",
+            ))
+        }
+    }
+}
+
 #[cfg(feature = "async")]
 impl<'a> crate::BlooioAccount<'a> {
     /// Access the webhooks resource group.
@@ -487,6 +501,7 @@ impl<'c> WebhookLogs<crate::BlooioAccount<'c>> {
 
     /// List logs with explicit filters/pagination.
     pub async fn list_with(&self, op: ListWebhookLogs) -> Result<ListWebhookLogsResponse> {
+        self.validate_operation_webhook_id(&op.webhook_id)?;
         self.client.send(op).await
     }
 
@@ -532,6 +547,7 @@ impl<'c> WebhookLogs<crate::BlockingBlooioAccount<'c>> {
 
     /// List logs with explicit filters/pagination.
     pub fn list_with(&self, op: ListWebhookLogs) -> Result<ListWebhookLogsResponse> {
+        self.validate_operation_webhook_id(&op.webhook_id)?;
         self.client.send(op)
     }
 

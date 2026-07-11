@@ -3,7 +3,9 @@
 //! This module is available only with the `sensitive-diagnostics` feature. It is
 //! intended for local protocol debugging and can expose API keys, URLs, phone
 //! numbers, message text, headers, and raw response bodies. Normal tracing,
-//! public errors, and `Debug` output remain redacted.
+//! public errors, and `Debug` output remain redacted. An explicit
+//! sensitive-tracing opt-in can additionally emit these snapshots to a
+//! dedicated tracing target without redaction.
 
 use std::fmt;
 use std::sync::Arc;
@@ -14,6 +16,55 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 
 use crate::core::raw::RawResponse;
 use crate::core::request::RequestSpec;
+
+pub(crate) const SENSITIVE_TRACE_TARGET: &str = "blooio::sensitive";
+
+pub(crate) fn emit_sensitive_trace(event: &SensitiveDiagnosticEvent) {
+    match event {
+        SensitiveDiagnosticEvent::Request(snapshot) => tracing::debug!(
+            target: SENSITIVE_TRACE_TARGET,
+            event = "blooio.sensitive.request",
+            method = %snapshot.method,
+            url = %snapshot.url,
+            operation = snapshot.operation,
+            attempt = snapshot.attempt,
+            max_retries = snapshot.max_retries,
+            trace_label = ?snapshot.trace_label,
+            headers = ?snapshot.headers,
+            body = ?snapshot.body,
+        ),
+        SensitiveDiagnosticEvent::Response(snapshot) => tracing::debug!(
+            target: SENSITIVE_TRACE_TARGET,
+            event = "blooio.sensitive.response",
+            method = %snapshot.method,
+            url = %snapshot.url,
+            operation = snapshot.operation,
+            attempt = snapshot.attempt,
+            max_retries = snapshot.max_retries,
+            trace_label = ?snapshot.trace_label,
+            status = snapshot.status,
+            headers = ?snapshot.headers,
+            body = ?snapshot.body,
+        ),
+        SensitiveDiagnosticEvent::TransportError(snapshot) => {
+            let request = &snapshot.request;
+            tracing::warn!(
+                target: SENSITIVE_TRACE_TARGET,
+                event = "blooio.sensitive.transport_error",
+                method = %request.method,
+                url = %request.url,
+                operation = request.operation,
+                attempt = request.attempt,
+                max_retries = request.max_retries,
+                trace_label = ?request.trace_label,
+                headers = ?request.headers,
+                body = ?request.body,
+                stage = ?snapshot.stage,
+                error = %snapshot.error,
+            );
+        }
+    }
+}
 
 /// A cloneable handle that dispatches sensitive diagnostic events to a caller
 /// supplied sink.

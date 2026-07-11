@@ -185,40 +185,10 @@ fn retry(
     };
     let error_kind = error_kind(error);
     let status = error.status();
-    let code = error.code();
     let retry_after_ms = error.retry_after().map(duration_ms);
 
-    match (status, code, retry_after_ms) {
-        (Some(status), Some(code), Some(retry_after_ms)) => trace_warn!(
-            trace.trace_label.as_deref(),
-            event = "blooio.request.retry",
-            method = method.as_str(),
-            operation = trace.operation,
-            attempt,
-            next_attempt,
-            max_retries = trace.max_retries,
-            delay_ms,
-            delay_source,
-            error_kind,
-            status,
-            code,
-            retry_after_ms,
-        ),
-        (Some(status), Some(code), None) => trace_warn!(
-            trace.trace_label.as_deref(),
-            event = "blooio.request.retry",
-            method = method.as_str(),
-            operation = trace.operation,
-            attempt,
-            next_attempt,
-            max_retries = trace.max_retries,
-            delay_ms,
-            delay_source,
-            error_kind,
-            status,
-            code,
-        ),
-        (Some(status), None, Some(retry_after_ms)) => trace_warn!(
+    match (status, retry_after_ms) {
+        (Some(status), Some(retry_after_ms)) => trace_warn!(
             trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
@@ -232,7 +202,7 @@ fn retry(
             status,
             retry_after_ms,
         ),
-        (Some(status), None, None) => trace_warn!(
+        (Some(status), None) => trace_warn!(
             trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
@@ -245,7 +215,7 @@ fn retry(
             error_kind,
             status,
         ),
-        (None, _, _) => trace_warn!(
+        (None, _) => trace_warn!(
             trace.trace_label.as_deref(),
             event = "blooio.request.retry",
             method = method.as_str(),
@@ -290,22 +260,8 @@ fn operation_failure(
     let elapsed_ms = duration_ms(elapsed);
     let error_kind = error_kind(error);
     let status = status.or_else(|| error.status());
-    let code = error.code();
-
-    match (status, code) {
-        (Some(status), Some(code)) => trace_warn!(
-            trace.trace_label.as_deref(),
-            event = "blooio.operation.failure",
-            method = method.as_str(),
-            operation = trace.operation,
-            attempts,
-            max_retries = trace.max_retries,
-            elapsed_ms,
-            error_kind,
-            status,
-            code,
-        ),
-        (Some(status), None) => trace_warn!(
+    match status {
+        Some(status) => trace_warn!(
             trace.trace_label.as_deref(),
             event = "blooio.operation.failure",
             method = method.as_str(),
@@ -316,7 +272,7 @@ fn operation_failure(
             error_kind,
             status,
         ),
-        (None, _) => trace_warn!(
+        None => trace_warn!(
             trace.trace_label.as_deref(),
             event = "blooio.operation.failure",
             method = method.as_str(),
@@ -337,6 +293,8 @@ fn error_kind(error: &Error) -> &'static str {
     match error {
         Error::Api(_) => "api",
         Error::Transport(_) => "transport",
+        Error::RequestBuild => "request_build",
+        Error::ResponseBodyTooLarge { .. } => "response_body_too_large",
         Error::Encode(_) => "encode",
         Error::Decode(_) => "decode",
         Error::Config(_) => "config",

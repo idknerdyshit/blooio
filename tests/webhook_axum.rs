@@ -12,7 +12,7 @@ use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use blooio::webhook::{
-    DEFAULT_MAX_WEBHOOK_BODY_BYTES, ResolvedWebhook, SignatureHeader, VerifiedWebhook,
+    DEFAULT_MAX_WEBHOOK_BODY_BYTES, ResolvedWebhook, SignatureHeader, VerifiedWebhook, VerifyError,
     WebhookRejection, WebhookVerificationResolver, WebhookVerifier, peek, verify_preparsed,
 };
 use hmac::{Hmac, KeyInit, Mac};
@@ -195,6 +195,31 @@ async fn oversized_body_is_rejected() {
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+#[tokio::test]
+async fn streaming_body_limit_is_enforced_without_content_length() {
+    for (size, expected) in [
+        (DEFAULT_MAX_WEBHOOK_BODY_BYTES, StatusCode::UNAUTHORIZED),
+        (
+            DEFAULT_MAX_WEBHOOK_BODY_BYTES + 1,
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+    ] {
+        let body = vec![b'x'; size];
+        let resp = app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/webhooks")
+                    .header("x-blooio-signature", "t=1700000000,v1=deadbeef")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), expected);
+    }
+}
+
 #[derive(Clone)]
 struct DynamicState {
     resolver: DynamicResolver,
@@ -211,7 +236,6 @@ struct DynamicContext {
 #[derive(Debug)]
 enum DynamicError {
     Rejection(WebhookRejection),
-    UnknownInternalId,
 }
 
 impl From<WebhookRejection> for DynamicError {
@@ -224,7 +248,6 @@ impl IntoResponse for DynamicError {
     fn into_response(self) -> Response {
         match self {
             DynamicError::Rejection(rejection) => rejection.into_response(),
-            DynamicError::UnknownInternalId => StatusCode::NO_CONTENT.into_response(),
         }
     }
 }
@@ -247,12 +270,46 @@ impl WebhookVerificationResolver for DynamicResolver {
     ) -> Self::Future<'a> {
         std::future::ready((|| {
             let peeked = peek(raw_body).map_err(WebhookRejection::Malformed)?;
-            if peeked.internal_id.as_deref() != Some("+15550001111") {
-                return Err(DynamicError::UnknownInternalId);
+            let known_identifier = peeked.internal_id.as_deref() == Some("+15550001111");
+            let secret = if known_identifier {
+                SECRET.as_bytes()
+            } else {
+                b"non-production-dummy-secret"
+            };
+            let verification = verify_preparsed(secret, signature, raw_body);
+            if !known_identifier {
+                return Err(WebhookRejection::InvalidSignature(VerifyError::Mismatch).into());
             }
-            verify_preparsed(SECRET.as_bytes(), signature, raw_body)
-                .map_err(WebhookRejection::InvalidSignature)?;
+            verification.map_err(WebhookRejection::InvalidSignature)?;
             Ok(DynamicContext { org_id: "org_1" })
         })())
     }
+}
+
+#[tokio::test]
+async fn dynamic_resolver_hides_identifier_existence() {
+    let known = br#"{"event":"message.received","internal_id":"+15550001111"}"#;
+    let unknown = br#"{"event":"message.received","internal_id":"+15550009999"}"#;
+    let timestamp = now();
+    let mut responses = Vec::new();
+    for body in [known.as_slice(), unknown.as_slice()] {
+        let response = dynamic_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/webhooks")
+                    .header("x-blooio-signature", format!("t={timestamp},v1=deadbeef"))
+                    .body(Body::from(body.to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        responses.push((status, body));
+    }
+    assert_eq!(responses[0], responses[1]);
+    assert_eq!(responses[0].0, StatusCode::UNAUTHORIZED);
 }

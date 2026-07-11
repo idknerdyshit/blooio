@@ -19,6 +19,15 @@ pub trait Operation {
     /// The HTTP method.
     const METHOD: http::Method;
 
+    /// Whether a non-safe operation can be retried automatically without
+    /// duplicating its effects.
+    ///
+    /// `GET`, `HEAD`, and `OPTIONS` operations are always considered retry-safe
+    /// by the executors. Mutating operations must opt in explicitly. Operations
+    /// that opt in and do not already provide an `Idempotency-Key` receive one
+    /// before the first attempt.
+    const RETRY_SAFE: bool = false;
+
     /// The path, relative to the configured base URL (must begin with `/`).
     fn path(&self) -> String;
 

@@ -16,6 +16,7 @@ use crate::types::IntoStringList;
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct BatchLookupResponse {
+    #[serde(default)]
     pub results: Vec<crate::types::PhoneNumberLookupResult>,
 }
 
@@ -53,6 +54,7 @@ pub struct LookupPhoneNumberPost {
 impl Operation for LookupPhoneNumberPost {
     type Output = crate::types::PhoneNumberLookupResult;
     const METHOD: Method = Method::POST;
+    const RETRY_SAFE: bool = true;
     fn path(&self) -> String {
         "/phone-numbers/lookup".into()
     }
@@ -81,6 +83,7 @@ impl BatchLookupPhoneNumbers {
 impl Operation for BatchLookupPhoneNumbers {
     type Output = BatchLookupResponse;
     const METHOD: Method = Method::POST;
+    const RETRY_SAFE: bool = true;
     fn path(&self) -> String {
         "/phone-numbers/batch".into()
     }

@@ -1,6 +1,9 @@
 //! Client configuration.
 
+use std::fmt;
 use std::time::Duration;
+
+use http::HeaderValue;
 
 #[cfg(feature = "sensitive-diagnostics")]
 use crate::core::diagnostics::SensitiveDiagnostics;
@@ -10,9 +13,12 @@ use crate::error::{Error, Result};
 /// The production base URL for the Blooio API.
 pub const DEFAULT_BASE_URL: &str = "https://backend.blooio.com/v2/api";
 
+/// Default maximum response body retained in memory by either executor (64 MiB).
+pub const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 64 * 1024 * 1024;
+
 /// Shared transport configuration consumed by both the async and blocking
 /// clients.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClientConfig {
     /// API base URL, without a trailing slash. Defaults to [`DEFAULT_BASE_URL`].
     pub base_url: String,
@@ -31,6 +37,46 @@ pub struct ClientConfig {
     /// override is supplied. The sink itself is redacted from [`Debug`].
     #[cfg(feature = "sensitive-diagnostics")]
     pub sensitive_diagnostics: Option<SensitiveDiagnostics>,
+    /// Enable intentionally unredacted tracing for every request made by
+    /// clients built from this configuration.
+    #[cfg(feature = "sensitive-diagnostics")]
+    pub sensitive_tracing: bool,
+}
+
+impl fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = f.debug_struct("ClientConfig");
+        debug
+            .field("base_url", &self.base_url)
+            .field("timeout", &self.timeout)
+            .field("user_agent", &self.user_agent)
+            .field("retry", &self.retry);
+        #[cfg(feature = "sensitive-diagnostics")]
+        debug
+            .field(
+                "sensitive_diagnostics",
+                &format_args!(
+                    "{}",
+                    if self.sensitive_diagnostics.is_some() {
+                        "Some([REDACTED])"
+                    } else {
+                        "None"
+                    }
+                ),
+            )
+            .field(
+                "sensitive_tracing",
+                &format_args!(
+                    "{}",
+                    if self.sensitive_tracing {
+                        "[REDACTED]"
+                    } else {
+                        "false"
+                    }
+                ),
+            );
+        debug.finish()
+    }
 }
 
 impl Default for ClientConfig {
@@ -42,6 +88,8 @@ impl Default for ClientConfig {
             retry: RetryPolicy::default(),
             #[cfg(feature = "sensitive-diagnostics")]
             sensitive_diagnostics: None,
+            #[cfg(feature = "sensitive-diagnostics")]
+            sensitive_tracing: false,
         }
     }
 }
@@ -98,6 +146,14 @@ impl ClientConfig {
         self
     }
 
+    /// Validate values interpreted as URL or HTTP header components.
+    pub fn validate(&self) -> Result<()> {
+        validate_base_url(&self.base_url, "client base URL")?;
+        HeaderValue::from_str(&self.user_agent)
+            .map_err(|_| Error::config("user agent is not a valid HTTP header value"))?;
+        Ok(())
+    }
+
     /// Attach a client-wide sensitive diagnostics sink.
     ///
     /// This is available only with the `sensitive-diagnostics` feature and can
@@ -116,6 +172,29 @@ impl ClientConfig {
     #[must_use]
     pub fn without_sensitive_diagnostics(mut self) -> Self {
         self.sensitive_diagnostics = None;
+        self
+    }
+
+    /// Enable intentionally unredacted tracing for all client requests.
+    ///
+    /// This is available only with the `sensitive-diagnostics` feature. It
+    /// emits complete request/response snapshots and raw transport errors to
+    /// the `blooio::sensitive` tracing target, including credentials, URLs,
+    /// headers, and bodies. It is intended only for local protocol debugging;
+    /// do not enable it with production log sinks.
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[must_use]
+    pub fn with_sensitive_tracing(mut self) -> Self {
+        self.sensitive_tracing = true;
+        self
+    }
+
+    /// Disable intentionally unredacted tracing for clients built from this
+    /// configuration.
+    #[cfg(feature = "sensitive-diagnostics")]
+    #[must_use]
+    pub fn without_sensitive_tracing(mut self) -> Self {
+        self.sensitive_tracing = false;
         self
     }
 
@@ -211,14 +290,21 @@ mod tests {
     #[cfg(feature = "sensitive-diagnostics")]
     #[test]
     fn sensitive_diagnostics_can_be_set_and_cleared() {
-        let cfg = ClientConfig::new().with_sensitive_diagnostics(SensitiveDiagnostics::noop());
+        let cfg = ClientConfig::new()
+            .with_sensitive_diagnostics(SensitiveDiagnostics::noop())
+            .with_sensitive_tracing();
         assert!(cfg.sensitive_diagnostics.is_some());
+        assert!(cfg.sensitive_tracing);
         let dbg = format!("{cfg:?}");
         assert!(dbg.contains("sensitive_diagnostics"));
+        assert!(dbg.contains("sensitive_tracing"));
         assert!(dbg.contains("REDACTED"));
 
-        let cfg = cfg.without_sensitive_diagnostics();
+        let cfg = cfg
+            .without_sensitive_diagnostics()
+            .without_sensitive_tracing();
         assert!(cfg.sensitive_diagnostics.is_none());
+        assert!(!cfg.sensitive_tracing);
     }
 
     #[test]
@@ -245,5 +331,25 @@ mod tests {
             ClientConfig::from_env_values(Some("https://example.com/api?token=secret".into()))
                 .unwrap_err();
         assert!(matches!(err, Error::Config(_)));
+    }
+
+    #[test]
+    fn validate_rejects_programmatic_base_url_query() {
+        let err = ClientConfig::new()
+            .with_base_url("https://example.com/api?token=secret")
+            .validate()
+            .unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(!err.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_user_agent_without_reflecting_it() {
+        let err = ClientConfig::new()
+            .with_user_agent("bad\nsecret")
+            .validate()
+            .unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        assert!(!err.to_string().contains("secret"));
     }
 }

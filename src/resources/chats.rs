@@ -2,9 +2,10 @@
 //! `sendMessage`), reactions, typing indicators, read receipts, polls, chat
 //! background, and contact-card sharing.
 
-use http::{Method, header::HeaderValue};
+use http::Method;
 use serde::{Deserialize, Serialize};
 
+use crate::core::multipart::{boundary_for, file_body, part_content_type};
 use crate::core::operation::{Operation, encode_path_segment, json_body, push_opt};
 use crate::core::pagination::{DEFAULT_PAGE_SIZE, Listing, Page, Pagination, Paginator};
 use crate::error::{Error, Result};
@@ -141,6 +142,7 @@ impl ReplyToRequest {
 #[derive(Debug, Clone, Deserialize)]
 #[non_exhaustive]
 pub struct ListChatsResponse {
+    #[serde(default)]
     pub chats: Vec<Chat>,
     pub pagination: Option<Pagination>,
 }
@@ -161,6 +163,7 @@ impl Listing for ListChatsResponse {
 #[non_exhaustive]
 pub struct ListChatMessagesResponse {
     pub chat_id: Option<String>,
+    #[serde(default)]
     pub messages: Vec<Message>,
     pub pagination: Option<Pagination>,
 }
@@ -215,57 +218,6 @@ pub struct ShareContactCardResponse {
     pub success: Option<bool>,
     pub chat_id: Option<String>,
     pub message: Option<String>,
-}
-
-fn multipart_background_body(
-    boundary: &str,
-    background: &[u8],
-    filename: Option<&str>,
-    content_type: &str,
-) -> Vec<u8> {
-    let mut body = Vec::new();
-    body.extend_from_slice(b"--");
-    body.extend_from_slice(boundary.as_bytes());
-    body.extend_from_slice(b"\r\nContent-Disposition: form-data; name=\"background\"");
-    if let Some(filename) = filename {
-        body.extend_from_slice(b"; filename=\"");
-        body.extend_from_slice(escape_multipart_header_value(filename).as_bytes());
-        body.extend_from_slice(b"\"");
-    }
-    body.extend_from_slice(b"\r\nContent-Type: ");
-    body.extend_from_slice(content_type.as_bytes());
-    body.extend_from_slice(b"\r\n\r\n");
-    body.extend_from_slice(background);
-    body.extend_from_slice(b"\r\n--");
-    body.extend_from_slice(boundary.as_bytes());
-    body.extend_from_slice(b"--\r\n");
-    body
-}
-
-fn multipart_part_content_type(content_type: Option<&str>) -> Result<&str> {
-    let content_type = content_type.unwrap_or("application/octet-stream");
-    HeaderValue::from_str(content_type).map_err(Error::config)?;
-    Ok(content_type)
-}
-
-fn escape_multipart_header_value(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\r' | '\n' => escaped.push('_'),
-            _ => escaped.push(ch),
-        }
-    }
-    escaped
-}
-
-fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
-    !needle.is_empty()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
 }
 
 // ===========================================================================
@@ -522,6 +474,7 @@ impl SendMessage {
 impl Operation for SendMessage {
     type Output = SendMessageResponse;
     const METHOD: Method = Method::POST;
+    const RETRY_SAFE: bool = true;
     fn path(&self) -> String {
         format!("/chats/{}/messages", encode_path_segment(&self.chat_id))
     }
@@ -776,7 +729,7 @@ impl SetChatBackground {
         Self {
             chat_id: chat_id.into(),
             background: background.into(),
-            filename: None,
+            filename: Some("anonymous_file".to_owned()),
             content_type: None,
         }
     }
@@ -796,13 +749,7 @@ impl SetChatBackground {
     }
 
     fn boundary(&self) -> String {
-        for index in 0u64.. {
-            let boundary = format!("blooio-form-boundary-{index}");
-            if !contains_bytes(&self.background, boundary.as_bytes()) {
-                return boundary;
-            }
-        }
-        unreachable!("unbounded boundary search must find a value absent from a finite payload")
+        boundary_for(&self.background)
     }
 }
 
@@ -821,9 +768,10 @@ impl Operation for SetChatBackground {
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
         let boundary = self.boundary();
-        let content_type = multipart_part_content_type(self.content_type.as_deref())?;
-        Ok(Some(multipart_background_body(
+        let content_type = part_content_type(self.content_type.as_deref())?;
+        Ok(Some(file_body(
             &boundary,
+            "background",
             &self.background,
             self.filename.as_deref(),
             content_type,
@@ -862,6 +810,18 @@ pub struct Chats<C> {
 pub struct Chat_<C> {
     pub(crate) client: C,
     pub(crate) chat_id: String,
+}
+
+impl<C> Chat_<C> {
+    fn validate_operation_chat_id(&self, operation_chat_id: &str) -> Result<()> {
+        if operation_chat_id == self.chat_id {
+            Ok(())
+        } else {
+            Err(Error::config(
+                "operation chat_id does not match scoped chat handle",
+            ))
+        }
+    }
 }
 
 #[cfg(feature = "async")]
@@ -972,6 +932,7 @@ impl<'c> Chat_<crate::BlooioAccount<'c>> {
         &self,
         query: ListChatMessages,
     ) -> Result<ListChatMessagesResponse> {
+        self.validate_operation_chat_id(&query.chat_id)?;
         self.client.send(query).await
     }
 
@@ -1000,6 +961,7 @@ impl<'c> Chat_<crate::BlooioAccount<'c>> {
 
     /// Send a fully-built message.
     pub async fn send(&self, message: SendMessage) -> Result<SendMessageResponse> {
+        self.validate_operation_chat_id(&message.chat_id)?;
         self.client.send(message).await
     }
 
@@ -1126,6 +1088,7 @@ impl<'c> Chat_<crate::BlooioAccount<'c>> {
         &self,
         op: SetChatBackground,
     ) -> Result<ChatBackgroundResponse> {
+        self.validate_operation_chat_id(&op.chat_id)?;
         self.client.send(op).await
     }
 
@@ -1156,6 +1119,7 @@ impl<'c> Chat_<crate::BlockingBlooioAccount<'c>> {
 
     /// List messages with explicit filters.
     pub fn list_messages_with(&self, query: ListChatMessages) -> Result<ListChatMessagesResponse> {
+        self.validate_operation_chat_id(&query.chat_id)?;
         self.client.send(query)
     }
 
@@ -1184,6 +1148,7 @@ impl<'c> Chat_<crate::BlockingBlooioAccount<'c>> {
 
     /// Send a fully-built message.
     pub fn send(&self, message: SendMessage) -> Result<SendMessageResponse> {
+        self.validate_operation_chat_id(&message.chat_id)?;
         self.client.send(message)
     }
 
@@ -1284,6 +1249,7 @@ impl<'c> Chat_<crate::BlockingBlooioAccount<'c>> {
 
     /// Set the chat background with a fully-built upload operation.
     pub fn set_background_with(&self, op: SetChatBackground) -> Result<ChatBackgroundResponse> {
+        self.validate_operation_chat_id(&op.chat_id)?;
         self.client.send(op)
     }
 
@@ -1439,6 +1405,8 @@ mod tests {
                 "multipart/form-data; boundary=blooio-form-boundary-0".into()
             )]
         );
+        let body = String::from_utf8(op.body().unwrap().unwrap()).unwrap();
+        assert!(body.contains("filename=\"anonymous_file\""));
     }
 
     #[test]
