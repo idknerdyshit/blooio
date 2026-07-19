@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0-beta.0] - 2026-07-19
+
 ### Added
 
 - Add an opt-in `api-v4` feature with dedicated async and blocking clients,
@@ -34,11 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Replace the v4 `ChannelType` string wrapper with a typed, forward-compatible
   enum matching the pinned schema.
-- Added fallible `try_from_config_and_http_client` and
+- Add fallible `try_from_config_and_http_client` and
   `try_from_config_and_agent` constructors while retaining the existing
   infallible constructors for source compatibility.
-- `native-tls` takes precedence when both TLS backend features are enabled.
-- The non-default `sensitive-diagnostics` feature can explicitly emit raw
+- Make `native-tls` take precedence when both TLS backend features are enabled.
+- Allow the non-default `sensitive-diagnostics` feature to explicitly emit raw
   protocol snapshots to the `blooio::sensitive` tracing target.
 
 ## [1.0.2] - 2026-07-05
@@ -213,7 +215,8 @@ Initial release.
   `blooio.request` span per request carrying method, path, status, and elapsed.
 - Dual-licensed under MIT OR Apache-2.0.
 
-[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/idknerdyshit/blooio/compare/v2.0.0-beta.0...HEAD
+[2.0.0-beta.0]: https://github.com/idknerdyshit/blooio/compare/v1.0.2...v2.0.0-beta.0
 [1.0.2]: https://github.com/idknerdyshit/blooio/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/idknerdyshit/blooio/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/idknerdyshit/blooio/compare/v0.4.0...v1.0.0
