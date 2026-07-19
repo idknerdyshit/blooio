@@ -254,6 +254,83 @@ where
     }
 }
 
+#[cfg(all(feature = "api-v4", feature = "async"))]
+impl<F, O> Paginator<crate::v4::BlooioAccount<'_>, F, O>
+where
+    F: Fn(u32, u32) -> O,
+    O: crate::v4::Operation,
+    O::Output: Listing,
+{
+    /// Fetch the next v4 offset page, or `None` once exhausted.
+    pub async fn next_page(&mut self) -> Option<Result<Vec<<O::Output as Listing>::Item>>> {
+        if self.cursor.done {
+            return None;
+        }
+        let op = (self.make)(self.cursor.offset, self.cursor.limit.get());
+        match self.client.send(op).await {
+            Ok(out) => Some(Ok(self.cursor.advance(out.into_page()))),
+            Err(error) => {
+                self.cursor.done = true;
+                Some(Err(error))
+            }
+        }
+    }
+
+    /// Drain all remaining v4 offset pages.
+    pub async fn collect_all(mut self) -> Result<Vec<<O::Output as Listing>::Item>> {
+        let mut all = Vec::new();
+        while let Some(page) = self.next_page().await {
+            all.extend(page?);
+        }
+        Ok(all)
+    }
+}
+
+#[cfg(all(feature = "api-v4", feature = "sync"))]
+impl<F, O> Paginator<crate::v4::BlockingBlooioAccount<'_>, F, O>
+where
+    F: Fn(u32, u32) -> O,
+    O: crate::v4::Operation,
+    O::Output: Listing,
+{
+    /// Fetch the next v4 offset page, or `None` once exhausted.
+    pub fn next_page(&mut self) -> Option<Result<Vec<<O::Output as Listing>::Item>>> {
+        if self.cursor.done {
+            return None;
+        }
+        let op = (self.make)(self.cursor.offset, self.cursor.limit.get());
+        match self.client.send(op) {
+            Ok(out) => Some(Ok(self.cursor.advance(out.into_page()))),
+            Err(error) => {
+                self.cursor.done = true;
+                Some(Err(error))
+            }
+        }
+    }
+
+    /// Drain all remaining v4 offset pages.
+    pub fn collect_all(mut self) -> Result<Vec<<O::Output as Listing>::Item>> {
+        let mut all = Vec::new();
+        while let Some(page) = self.next_page() {
+            all.extend(page?);
+        }
+        Ok(all)
+    }
+}
+
+#[cfg(all(feature = "api-v4", feature = "sync"))]
+impl<F, O> Iterator for Paginator<crate::v4::BlockingBlooioAccount<'_>, F, O>
+where
+    F: Fn(u32, u32) -> O,
+    O: crate::v4::Operation,
+    O::Output: Listing,
+{
+    type Item = Result<Vec<<O::Output as Listing>::Item>>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_page()
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,

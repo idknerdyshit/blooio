@@ -646,13 +646,30 @@ mod tests {
 
 /// Safe subset of the Blooio `Error` schema.
 #[cfg(any(feature = "async", feature = "sync"))]
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ApiErrorBody {
+    Nested { error: NestedApiErrorBody },
+    Flat(FlatApiErrorBody),
+}
+
+#[cfg(any(feature = "async", feature = "sync"))]
 #[derive(Default, Deserialize)]
-pub(crate) struct ApiErrorBody {
+pub(crate) struct FlatApiErrorBody {
     pub error: Option<String>,
     pub message: Option<String>,
     #[allow(dead_code)]
     pub status: Option<u16>,
     pub code: Option<String>,
     #[serde(flatten)]
+    pub details: Map<String, Value>,
+}
+
+#[cfg(any(feature = "async", feature = "sync"))]
+#[derive(Default, Deserialize)]
+pub(crate) struct NestedApiErrorBody {
+    pub code: Option<String>,
+    pub message: Option<String>,
+    #[serde(default)]
     pub details: Map<String, Value>,
 }

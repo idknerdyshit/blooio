@@ -14,7 +14,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +27,7 @@ use blooio::{
     BlooioCreds, ClientConfig, RequestOptions, RetryPolicy, SensitiveDiagnosticEvent,
     SensitiveDiagnostics, SensitiveTransportErrorStage,
 };
+use httpmock::prelude::*;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
@@ -153,42 +153,40 @@ fn captured(events: &EventCapture) -> Vec<SensitiveDiagnosticEvent> {
     events.lock().unwrap().clone()
 }
 
-fn response(status: u16, headers: &[(&str, &str)], body: &str) -> String {
-    let reason = match status {
-        503 => "Service Unavailable",
-        _ => "OK",
-    };
-    let mut out = format!(
-        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n",
-        body.len()
-    );
-    for (key, value) in headers {
-        out.push_str(key);
-        out.push_str(": ");
-        out.push_str(value);
-        out.push_str("\r\n");
-    }
-    out.push_str("\r\n");
-    out.push_str(body);
-    out
+struct TestResponse {
+    status: u16,
+    headers: Vec<(&'static str, &'static str)>,
+    body: &'static str,
 }
 
-fn sequence_server(responses: Vec<String>) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    std::thread::spawn(move || {
-        for response in responses {
-            let Ok((mut stream, _addr)) = listener.accept() else {
-                return;
-            };
-            let mut buf = [0_u8; 4096];
-            if stream.read(&mut buf).is_err() {
-                return;
+fn response(
+    status: u16,
+    headers: &[(&'static str, &'static str)],
+    body: &'static str,
+) -> TestResponse {
+    TestResponse {
+        status,
+        headers: headers.to_vec(),
+        body,
+    }
+}
+
+fn sequence_server(responses: Vec<TestResponse>) -> (MockServer, String) {
+    let server = MockServer::start();
+    let responses = Arc::new(Mutex::new(responses));
+    server.mock(|when, then| {
+        when.any_request();
+        then.respond_with(move |_request| {
+            let response = responses.lock().unwrap().remove(0);
+            let mut builder = HttpMockResponse::builder().status(response.status);
+            for (key, value) in &response.headers {
+                builder = builder.header(*key, *value);
             }
-            stream.write_all(response.as_bytes()).unwrap();
-        }
+            builder.body(response.body).build()
+        });
     });
-    format!("http://{addr}")
+    let base_url = server.base_url();
+    (server, base_url)
 }
 
 fn unused_base_url() -> String {
@@ -408,7 +406,7 @@ fn assert_trace_request_response(events: &[CapturedTraceEvent], base_url: &str) 
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_client_default_sink_captures_request_and_response() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = Client::from_config(config(base_url.clone(), diagnostics)).unwrap();
     let creds = test_creds();
@@ -421,7 +419,7 @@ async fn async_client_default_sink_captures_request_and_response() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_client_default_sink_captures_request_and_response() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = BlockingClient::from_config(config(base_url.clone(), diagnostics)).unwrap();
     let creds = test_creds();
@@ -434,7 +432,7 @@ fn blocking_client_default_sink_captures_request_and_response() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_per_request_sink_overrides_client_default_and_captures_sensitive_data() {
-    let base_url = sequence_server(vec![response(
+    let (_server, base_url) = sequence_server(vec![response(
         200,
         &[("x-sensitive-response", RESPONSE_SECRET)],
         r#"{"message_id":"message-secret"}"#,
@@ -457,7 +455,7 @@ async fn async_per_request_sink_overrides_client_default_and_captures_sensitive_
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_per_request_sink_overrides_client_default_and_captures_sensitive_data() {
-    let base_url = sequence_server(vec![response(
+    let (_server, base_url) = sequence_server(vec![response(
         200,
         &[("x-sensitive-response", RESPONSE_SECRET)],
         r#"{"message_id":"message-secret"}"#,
@@ -479,7 +477,7 @@ fn blocking_per_request_sink_overrides_client_default_and_captures_sensitive_dat
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_noop_request_override_disables_client_default() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = Client::from_config(config(base_url, diagnostics)).unwrap();
     let creds = test_creds();
@@ -499,7 +497,7 @@ async fn async_noop_request_override_disables_client_default() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_noop_request_override_disables_client_default() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, events) = capture();
     let client = BlockingClient::from_config(config(base_url, diagnostics)).unwrap();
     let creds = test_creds();
@@ -583,7 +581,7 @@ fn blocking_build_failure_emits_build_request_without_request_event() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_retries_emit_request_and_response_for_each_attempt() {
-    let base_url = sequence_server(vec![
+    let (_server, base_url) = sequence_server(vec![
         response(
             503,
             &[("retry-after", "0")],
@@ -603,7 +601,7 @@ async fn async_retries_emit_request_and_response_for_each_attempt() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_retries_emit_request_and_response_for_each_attempt() {
-    let base_url = sequence_server(vec![
+    let (_server, base_url) = sequence_server(vec![
         response(
             503,
             &[("retry-after", "0")],
@@ -623,7 +621,7 @@ fn blocking_retries_emit_request_and_response_for_each_attempt() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_sensitive_tracing_respects_client_and_request_overrides() {
-    let base_url = sequence_server(vec![
+    let (_server, base_url) = sequence_server(vec![
         response(
             200,
             &[("x-sensitive-response", RESPONSE_SECRET)],
@@ -693,7 +691,7 @@ async fn async_sensitive_tracing_respects_client_and_request_overrides() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_sensitive_tracing_respects_client_and_request_overrides() {
-    let base_url = sequence_server(vec![
+    let (_server, base_url) = sequence_server(vec![
         response(
             200,
             &[("x-sensitive-response", RESPONSE_SECRET)],
@@ -759,7 +757,7 @@ fn blocking_sensitive_tracing_respects_client_and_request_overrides() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_sensitive_tracing_and_callback_diagnostics_are_independent() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, callback_events) = capture();
     let client =
         Client::from_config(tracing_config(base_url, true).with_sensitive_diagnostics(diagnostics))
@@ -783,7 +781,7 @@ async fn async_sensitive_tracing_and_callback_diagnostics_are_independent() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_sensitive_tracing_and_callback_diagnostics_are_independent() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (diagnostics, callback_events) = capture();
     let client = BlockingClient::from_config(
         tracing_config(base_url, true).with_sensitive_diagnostics(diagnostics),
@@ -808,7 +806,7 @@ fn blocking_sensitive_tracing_and_callback_diagnostics_are_independent() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_sensitive_tracing_captures_retries_and_transport_errors() {
-    let base_url = sequence_server(vec![
+    let (_server, base_url) = sequence_server(vec![
         response(503, &[], r#"{"error":"retry response-secret"}"#),
         response(200, &[], r#"{"valid":true}"#),
     ]);

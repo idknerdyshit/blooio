@@ -21,6 +21,7 @@ from a single sans-IO core. Sync users pull no async runtime.
 | `actix`                   |         | Verified actix-web webhook extractor; implies `webhooks`. |
 | `tracing`                 |   ✅    | Secret-redacted request instrumentation.                  |
 | `sensitive-diagnostics`   |         | Explicit raw request/response inspection and tracing for local debugging. |
+| `api-v4`                  |         | Additive Blooio API v4 beta namespace; does not change the root v2 API. |
 
 At least one of `async` / `sync` / `webhooks` must be enabled (enforced at
 compile time).
@@ -45,6 +46,39 @@ Webhook parsing and verification only, no Blooio API HTTP client:
 [dependencies]
 blooio = { version = "1", default-features = false, features = ["webhooks"] }
 ```
+
+API v4 is opt-in and additive:
+
+```toml
+[dependencies]
+blooio = { version = "1", features = ["api-v4"] }
+```
+
+The crate root continues to represent API v2. V4 lives under `blooio::v4`,
+uses dedicated DTOs, and defaults to `https://api.blooio.com/v4`:
+
+```rust,no_run
+use blooio::BlooioCreds;
+use blooio::v4::Client;
+use blooio::v4::resources::messages::SendMessage;
+use blooio::v4::types::{MessageContent, Recipient};
+
+# async fn demo() -> blooio::Result<()> {
+let client = Client::new()?;
+let creds = BlooioCreds::new("bl_live_...");
+let account = client.account(&creds);
+
+let _me = account.me().get().await?;
+let _sent = account.messages().send(SendMessage::new(
+    Recipient::identifier("+15551234567"),
+    MessageContent::text("hello from v4"),
+)).await?;
+# Ok(()) }
+```
+
+V4 list operations use opaque cursor pagination. Contacts additionally expose
+offset-based search. The v4 webhook envelope is available when both `api-v4`
+and `webhooks` are enabled and reuses the root signature verifier.
 
 ## Quick start (async)
 

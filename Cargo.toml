@@ -14,6 +14,9 @@ exclude = ["AGENTS.md"]
 
 [features]
 default = ["async", "rustls", "webhooks", "tracing"]
+# Additive bindings for the Blooio v4 beta API. Intentionally not enabled by
+# default so existing users continue to compile only the v2 surface.
+api-v4 = []
 # At least one of `async` / `sync` / `webhooks` must be enabled (compile_error! enforced in lib.rs).
 async = [
   "dep:reqwest",
@@ -112,6 +115,22 @@ required-features = ["tracing"]
 name = "live_smoke"
 required-features = ["async"]
 
+[[test]]
+name = "v4_integration_async"
+required-features = ["api-v4", "async"]
+
+[[test]]
+name = "v4_integration_sync"
+required-features = ["api-v4", "sync"]
+
+[[test]]
+name = "v4_redaction"
+required-features = ["api-v4"]
+
+[[test]]
+name = "v4_webhook"
+required-features = ["api-v4", "webhooks"]
+
 [[example]]
 name = "quickstart"
 required-features = ["async"]
@@ -139,6 +158,22 @@ required-features = ["sync"]
 [[example]]
 name = "webhooks"
 required-features = ["webhooks"]
+
+[[example]]
+name = "v4_quickstart"
+required-features = ["api-v4", "async"]
+
+[[example]]
+name = "v4_blocking"
+required-features = ["api-v4", "sync"]
+
+[[example]]
+name = "v4_pagination"
+required-features = ["api-v4", "async"]
+
+[[example]]
+name = "v4_webhooks"
+required-features = ["api-v4", "webhooks"]
 
 [package.metadata.docs.rs]
 all-features = true

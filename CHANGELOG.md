@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add an opt-in `api-v4` feature with dedicated async and blocking clients,
+  resources, DTOs, cursor pagination, nested error decoding, and webhook event
+  parsing for all 78 implemented operations in the pinned v4 specification.
+- Add strict offline v4 operation-coverage checks while keeping the nine
+  provider-planned operations non-callable.
+
 ### Fixed
 
 - Send group icons as multipart file uploads, preserve documented reply and
@@ -24,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replace the v4 `ChannelType` string wrapper with a typed, forward-compatible
+  enum matching the pinned schema.
 - Added fallible `try_from_config_and_http_client` and
   `try_from_config_and_agent` constructors while retaining the existing
   infallible constructors for source compatibility.

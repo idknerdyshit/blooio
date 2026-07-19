@@ -38,12 +38,16 @@ pub fn parse_with<T: DeserializeOwned>(
 /// Map a non-2xx response body to [`Error::Api`].
 pub fn map_error(status: u16, bytes: &[u8], retry_after: Option<Duration>) -> Error {
     if let Ok(body) = serde_json::from_slice::<ApiErrorBody>(bytes) {
+        let (code, error, message, details) = match body {
+            ApiErrorBody::Nested { error } => (error.code, None, error.message, error.details),
+            ApiErrorBody::Flat(body) => (body.code, body.error, body.message, body.details),
+        };
         Error::Api(ApiError::from_schema(
             status,
-            body.code,
-            body.error,
-            body.message,
-            ApiErrorDetails::new(body.details),
+            code,
+            error,
+            message,
+            ApiErrorDetails::new(details),
             retry_after,
         ))
     } else {
@@ -159,5 +163,26 @@ mod tests {
             !err.to_string().contains("upstream exploded"),
             "raw error body leaked into Display"
         );
+    }
+
+    #[test]
+    fn maps_nested_v4_error_and_redacts_it() {
+        let body = br#"{"error":{"code":"invalid_request","message":"secret prose","details":{"token":"sk-secret"},"request_id":"req-secret"}}"#;
+        let err = parse::<Thing>(400, body).unwrap_err();
+        let Error::Api(api) = &err else {
+            panic!("expected API error");
+        };
+        assert_eq!(api.code(), Some("invalid_request"));
+        assert_eq!(api.error(), None);
+        assert_eq!(api.server_message(), Some("secret prose"));
+        assert_eq!(
+            api.details().get("token"),
+            Some(&serde_json::json!("sk-secret"))
+        );
+        assert_eq!(api.details().get("request_id"), None);
+        let rendered = format!("{err:?} {err}");
+        assert!(!rendered.contains("secret prose"));
+        assert!(!rendered.contains("sk-secret"));
+        assert!(!rendered.contains("req-secret"));
     }
 }

@@ -109,8 +109,20 @@ impl ClientConfig {
         Self::from_env_values(env_var("BLOOIO_BASE_URL")?)
     }
 
+    #[cfg(feature = "api-v4")]
+    pub(crate) fn from_env_with_default(default_base_url: &str) -> Result<Self> {
+        Self::from_env_values_with_default(env_var("BLOOIO_BASE_URL")?, default_base_url)
+    }
+
     pub(crate) fn from_env_values(base_url: Option<String>) -> Result<Self> {
-        let mut config = Self::new();
+        Self::from_env_values_with_default(base_url, DEFAULT_BASE_URL)
+    }
+
+    fn from_env_values_with_default(
+        base_url: Option<String>,
+        default_base_url: &str,
+    ) -> Result<Self> {
+        let mut config = Self::new().with_base_url(default_base_url);
         if let Some(base_url) = base_url.filter(|value| !value.trim().is_empty()) {
             validate_base_url(&base_url, "BLOOIO_BASE_URL")?;
             config = config.with_base_url(base_url);
