@@ -12,7 +12,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,6 +21,7 @@ use blooio::BlockingClient;
 #[cfg(feature = "async")]
 use blooio::Client;
 use blooio::{BlooioCreds, ClientConfig, RequestOptions, RetryPolicy};
+use httpmock::prelude::*;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
@@ -247,43 +247,40 @@ fn capture_traces() -> (TraceCapture, impl Drop) {
     (capture, guard)
 }
 
-fn response(status: u16, headers: &[(&str, &str)], body: &str) -> String {
-    let reason = match status {
-        400 => "Bad Request",
-        503 => "Service Unavailable",
-        _ => "OK",
-    };
-    let mut out = format!(
-        "HTTP/1.1 {status} {reason}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n",
-        body.len()
-    );
-    for (key, value) in headers {
-        out.push_str(key);
-        out.push_str(": ");
-        out.push_str(value);
-        out.push_str("\r\n");
-    }
-    out.push_str("\r\n");
-    out.push_str(body);
-    out
+struct TestResponse {
+    status: u16,
+    headers: Vec<(&'static str, &'static str)>,
+    body: &'static str,
 }
 
-fn sequence_server(responses: Vec<String>) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    std::thread::spawn(move || {
-        for response in responses {
-            let Ok((mut stream, _addr)) = listener.accept() else {
-                return;
-            };
-            let mut buf = [0_u8; 4096];
-            if stream.read(&mut buf).is_err() {
-                return;
+fn response(
+    status: u16,
+    headers: &[(&'static str, &'static str)],
+    body: &'static str,
+) -> TestResponse {
+    TestResponse {
+        status,
+        headers: headers.to_vec(),
+        body,
+    }
+}
+
+fn sequence_server(responses: Vec<TestResponse>) -> (MockServer, String) {
+    let server = MockServer::start();
+    let responses = Arc::new(Mutex::new(responses));
+    server.mock(|when, then| {
+        when.any_request();
+        then.respond_with(move |_request| {
+            let response = responses.lock().unwrap().remove(0);
+            let mut builder = HttpMockResponse::builder().status(response.status);
+            for (key, value) in &response.headers {
+                builder = builder.header(*key, *value);
             }
-            stream.write_all(response.as_bytes()).unwrap();
-        }
+            builder.body(response.body).build()
+        });
     });
-    format!("http://{addr}")
+    let base_url = server.base_url();
+    (server, base_url)
 }
 
 fn unused_base_url() -> String {
@@ -482,7 +479,7 @@ fn assert_redacted(capture: &TraceCapture, extra_forbidden: &[&str]) {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_success_emits_attempt_and_operation_success() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (capture, _guard) = capture_traces();
 
     let client = Client::from_config(no_retry_config(base_url.clone())).unwrap();
@@ -496,7 +493,7 @@ async fn async_success_emits_attempt_and_operation_success() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_success_emits_attempt_and_operation_success() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (capture, _guard) = capture_traces();
 
     let client = BlockingClient::from_config(no_retry_config(base_url.clone())).unwrap();
@@ -510,7 +507,7 @@ fn blocking_success_emits_attempt_and_operation_success() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_trace_label_is_emitted_when_set() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (capture, _guard) = capture_traces();
 
     let client = Client::from_config(no_retry_config(base_url.clone())).unwrap();
@@ -531,7 +528,7 @@ async fn async_trace_label_is_emitted_when_set() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_trace_label_is_emitted_when_set() {
-    let base_url = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
+    let (_server, base_url) = sequence_server(vec![response(200, &[], r#"{"valid":true}"#)]);
     let (capture, _guard) = capture_traces();
 
     let client = BlockingClient::from_config(no_retry_config(base_url.clone())).unwrap();
@@ -551,7 +548,7 @@ fn blocking_trace_label_is_emitted_when_set() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_api_failure_emits_attempt_response_and_operation_failure() {
-    let base_url = sequence_server(vec![response(
+    let (_server, base_url) = sequence_server(vec![response(
         400,
         &[],
         r#"{"error":"bad_request","code":"invalid_request","message":"contains sk-structured-tracing-secret"}"#,
@@ -569,7 +566,7 @@ async fn async_api_failure_emits_attempt_response_and_operation_failure() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_api_failure_emits_attempt_response_and_operation_failure() {
-    let base_url = sequence_server(vec![response(
+    let (_server, base_url) = sequence_server(vec![response(
         400,
         &[],
         r#"{"error":"bad_request","code":"invalid_request","message":"contains sk-structured-tracing-secret"}"#,
@@ -587,7 +584,7 @@ fn blocking_api_failure_emits_attempt_response_and_operation_failure() {
 #[cfg(feature = "async")]
 #[tokio::test]
 async fn async_retry_event_links_transient_failure_to_success() {
-    let base_url = sequence_server(vec![
+    let (_server, base_url) = sequence_server(vec![
         response(
             503,
             &[("retry-after", "0")],
@@ -608,7 +605,7 @@ async fn async_retry_event_links_transient_failure_to_success() {
 #[cfg(feature = "sync")]
 #[test]
 fn blocking_retry_event_links_transient_failure_to_success() {
-    let base_url = sequence_server(vec![
+    let (_server, base_url) = sequence_server(vec![
         response(
             503,
             &[("retry-after", "0")],

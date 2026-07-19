@@ -41,6 +41,8 @@ jobs:
         run: cargo clippy --no-default-features --features sync,webhooks --all-targets -- -D warnings
       - name: clippy (webhooks only; no default)
         run: cargo clippy --no-default-features --features webhooks --all-targets -- -D warnings
+      - name: clippy (sync, webhooks, v4; no default)
+        run: cargo clippy --no-default-features --features sync,webhooks,api-v4 --all-targets -- -D warnings
 
   feature-matrix:
     name: feature matrix
@@ -59,6 +61,10 @@ jobs:
       - run: cargo check --no-default-features --features sync,rustls,sensitive-diagnostics --all-targets
       - run: cargo check --no-default-features --features axum --all-targets
       - run: cargo check --no-default-features --features actix --all-targets
+      - run: cargo check --no-default-features --features async,rustls,api-v4 --all-targets
+      - run: cargo check --no-default-features --features sync,rustls,api-v4 --all-targets
+      - run: cargo check --no-default-features --features webhooks,api-v4 --all-targets
+      - run: cargo check --all-features --all-targets
 
   msrv:
     name: Rust 1.88
@@ -92,6 +98,21 @@ jobs:
         run: cargo test --no-default-features --features sync,webhooks
       - name: test (webhooks only; no default)
         run: cargo test --no-default-features --features webhooks
+      - name: test (sync, webhooks, v4; no default)
+        run: cargo test --no-default-features --features sync,webhooks,api-v4
+      - name: test (webhooks, v4; no default)
+        run: cargo test --no-default-features --features webhooks,api-v4
+
+  v4-coverage:
+    name: v4 operation coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.x"
+      - run: python3 -m unittest tools.tests.test_check_v4_operations
+      - run: python3 tools/check_v4_operations.py
 
   docs:
     name: doc

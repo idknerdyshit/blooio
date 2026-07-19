@@ -111,6 +111,10 @@ pub mod error;
 pub mod secret;
 pub mod types;
 
+#[cfg(feature = "api-v4")]
+#[cfg_attr(docsrs, doc(cfg(feature = "api-v4")))]
+pub mod v4;
+
 #[cfg(any(feature = "async", feature = "sync"))]
 pub mod config;
 #[cfg(any(feature = "async", feature = "sync"))]
