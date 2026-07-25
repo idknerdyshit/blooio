@@ -10,8 +10,8 @@ pub struct Channel {
     pub id: Option<String>,
     #[serde(rename = "type")]
     pub channel_type: Option<ChannelType>,
-    pub display_address: Option<String>,
-    pub sender_key: Option<String>,
+    pub address: Option<String>,
+    pub alias: Option<String>,
     pub status: Option<String>,
     pub capabilities: Option<ChannelCapabilities>,
     pub created_at: Option<i64>,
@@ -41,6 +41,8 @@ pub struct PriorityChannel {
     pub channel_id: Option<String>,
     #[serde(rename = "type")]
     pub channel_type: Option<ChannelType>,
+    pub address: Option<String>,
+    pub alias: Option<String>,
     pub priority: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,

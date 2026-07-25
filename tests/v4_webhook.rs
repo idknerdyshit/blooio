@@ -38,6 +38,26 @@ fn parses_v4_envelope_and_peeks_routing_fields() {
 }
 
 #[test]
+fn parses_messaging_safety_events_forward_compatibly() {
+    let state_changed = br#"{"id":"evt_safety_1","type":"safety.state_changed","occurred_at":1700000000,"data":{"tier":"warm","previous_tier":"new","action":"slow","previous_action":"queue","reasons":["volume"]}}"#;
+    let event = blooio::v4::webhook::WebhookEvent::parse(state_changed).unwrap();
+    assert_eq!(event.event_type, "safety.state_changed");
+    assert_eq!(event.data.get("action"), Some(&serde_json::json!("slow")));
+    assert_eq!(
+        event.data.get("previous_action"),
+        Some(&serde_json::json!("queue"))
+    );
+
+    let number_banned = br#"{"id":"evt_safety_2","type":"safety.number_banned","occurred_at":1700000001,"data":{"channel_id":"ch_1","phone_number":"+15551234567","allocation_type":"dedicated","banned_at":1700000001}}"#;
+    let event = blooio::v4::webhook::WebhookEvent::parse(number_banned).unwrap();
+    assert_eq!(event.event_type, "safety.number_banned");
+    assert_eq!(
+        event.data.get("allocation_type"),
+        Some(&serde_json::json!("dedicated"))
+    );
+}
+
+#[test]
 fn shared_signature_verification_accepts_authentic_body() {
     let body = br#"{"id":"evt_1","type":"poll.voted","occurred_at":1700000000,"data":{}}"#;
     let header = sign(1_700_000_000, body);

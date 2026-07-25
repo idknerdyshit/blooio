@@ -12,7 +12,7 @@ use blooio::v4::resources::chats::{CreateChat, SendPoll, VotePoll};
 use blooio::v4::resources::contacts::UpdateContact;
 use blooio::v4::resources::groups::UpdateGroup;
 use blooio::v4::resources::messages::SendMessage;
-use blooio::v4::types::{MessageContent, MessageSendResult, Recipient};
+use blooio::v4::types::{MessageContentFields, MessageSendResult, Recipient};
 use blooio::v4::{Client, DEFAULT_BASE_URL};
 use blooio::{BlooioCreds, ClientConfig};
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
@@ -161,8 +161,8 @@ async fn global_send_uses_typed_body_and_idempotency_header() {
         .and(path("/messages"))
         .and(header_exists("idempotency-key"))
         .and(body_json(serde_json::json!({
-            "to": {"identifier": "+15551234567"},
-            "content": {"type": "text", "text": "hello"}
+            "to": "+15551234567",
+            "text": "hello"
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
             "id": "msg_1", "chat_id": "chat_1", "status": "queued"
@@ -178,7 +178,7 @@ async fn global_send_uses_typed_body_and_idempotency_header() {
         .messages()
         .send(SendMessage::new(
             Recipient::identifier("+15551234567"),
-            MessageContent::text("hello"),
+            MessageContentFields::text("hello"),
         ))
         .await
         .unwrap();
@@ -211,7 +211,7 @@ async fn create_chat_decodes_unwrapped_chat_created() {
         .and(path("/chats"))
         .and(body_json(serde_json::json!({
             "channel_id": "ch_1",
-            "to": {"identifier": "+15551234567"}
+            "to": "+15551234567"
         })))
         .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
             "id": "chat_1",
@@ -311,10 +311,8 @@ async fn multi_recipient_send_decodes_fan_out_result() {
         .account(&creds)
         .messages()
         .send(SendMessage::new(
-            Recipient::Identifiers {
-                identifiers: vec!["+15550000001".into(), "+15550000002".into()],
-            },
-            MessageContent::text("hello"),
+            Recipient::identifiers(["+15550000001", "+15550000002"]),
+            MessageContentFields::text("hello"),
         ))
         .await
         .unwrap();

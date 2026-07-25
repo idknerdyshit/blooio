@@ -53,12 +53,7 @@ impl_v4_operation!(ListChats);
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateChat {
     pub channel_id: String,
-    pub to: ChatRecipient,
-}
-/// Recipient used when creating a chat.
-#[derive(Debug, Clone, Serialize)]
-pub struct ChatRecipient {
-    pub identifier: String,
+    pub to: String,
 }
 impl CreateChat {
     /// Construct a chat request.
@@ -66,9 +61,7 @@ impl CreateChat {
     pub fn new(channel_id: impl Into<String>, identifier: impl Into<String>) -> Self {
         Self {
             channel_id: channel_id.into(),
-            to: ChatRecipient {
-                identifier: identifier.into(),
-            },
+            to: identifier.into(),
         }
     }
 }

@@ -5,8 +5,8 @@ use super::impl_v4_operation;
 use crate::v4::{
     CursorPaginator,
     types::{
-        ItemEnvelope, ListEnvelope, Message, MessageContent, MessageEvent, MessageSendResult,
-        MessageStatus, ReactionResult, Recipient, SenderSelector,
+        Hybrid, ItemEnvelope, ListEnvelope, Message, MessageContentFields, MessageEvent,
+        MessageSendResult, MessageStatus, ReactionResult, Recipient,
     },
 };
 use crate::{
@@ -45,14 +45,15 @@ impl_v4_operation!(ListChatMessages);
 pub struct SendMessageToChat {
     #[serde(skip)]
     pub chat_id: String,
-    pub content: MessageContent,
+    #[serde(flatten)]
+    pub content: MessageContentFields,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dry_run: Option<bool>,
 }
 impl SendMessageToChat {
     /// Construct a chat send.
     #[must_use]
-    pub fn new(chat_id: impl Into<String>, content: MessageContent) -> Self {
+    pub fn new(chat_id: impl Into<String>, content: MessageContentFields) -> Self {
         Self {
             chat_id: chat_id.into(),
             content,
@@ -76,20 +77,30 @@ impl_v4_operation!(SendMessageToChat);
 /// Send a globally routed message.
 #[derive(Debug, Clone, Serialize)]
 pub struct SendMessage {
-    #[serde(rename = "from", skip_serializing_if = "Option::is_none")]
-    pub sender: Option<SenderSelector>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     pub to: Recipient,
-    pub content: MessageContent,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_type: Option<crate::v4::types::ChannelType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hybrid: Option<Hybrid>,
+    #[serde(flatten)]
+    pub content: MessageContentFields,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dry_run: Option<bool>,
 }
 impl SendMessage {
     /// Construct a globally routed send.
     #[must_use]
-    pub fn new(to: Recipient, content: MessageContent) -> Self {
+    pub fn new(to: Recipient, content: MessageContentFields) -> Self {
         Self {
-            sender: None,
+            from: None,
             to,
+            priority_id: None,
+            channel_type: None,
+            hybrid: None,
             content,
             dry_run: None,
         }
@@ -265,7 +276,7 @@ impl<'a> crate::v4::resources::chats::ChatHandle<crate::v4::BlooioAccount<'a>> {
         )
     }
     /// Send content to this chat.
-    pub async fn send(&self, content: MessageContent) -> Result<MessageSendResult> {
+    pub async fn send(&self, content: MessageContentFields) -> Result<MessageSendResult> {
         self.client
             .send(SendMessageToChat::new(self.chat_id.clone(), content))
             .await
@@ -301,8 +312,218 @@ impl<'a> crate::v4::resources::chats::ChatHandle<crate::v4::BlockingBlooioAccoun
         )
     }
     /// Send content to this chat.
-    pub fn send(&self, content: MessageContent) -> Result<MessageSendResult> {
+    pub fn send(&self, content: MessageContentFields) -> Result<MessageSendResult> {
         self.client
             .send(SendMessageToChat::new(self.chat_id.clone(), content))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::v4::types::{LinkPreview, MultipartPart, TemplateFields};
+    use serde_json::json;
+
+    #[test]
+    fn message_content_fields_serializes_text_only() {
+        let body = serde_json::to_value(MessageContentFields::text("hello")).unwrap();
+        assert_eq!(body, json!({"text": "hello"}));
+    }
+
+    #[test]
+    fn message_content_fields_serializes_media_only() {
+        let body = serde_json::to_value(MessageContentFields::media(&[
+            "https://example.com/img.jpg",
+        ]))
+        .unwrap();
+        assert_eq!(
+            body,
+            json!({"attachments": ["https://example.com/img.jpg"]})
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_rich_link() {
+        let body = MessageContentFields::rich_link("https://example.com", "Example");
+        let body = serde_json::to_value(body).unwrap();
+        assert_eq!(
+            body,
+            json!({"rich_link": {"url": "https://example.com", "title": "Example"}})
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_poll() {
+        let body =
+            serde_json::to_value(MessageContentFields::poll("Lunch?", &["Yes", "No"])).unwrap();
+        assert_eq!(
+            body,
+            json!({"poll": {"title": "Lunch?", "options": ["Yes", "No"]}})
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_template() {
+        let body = serde_json::to_value(MessageContentFields::template("tpl_welcome")).unwrap();
+        assert_eq!(body, json!({"template": {"template_id": "tpl_welcome"}}));
+    }
+
+    #[test]
+    fn message_content_fields_serializes_provider_template_without_id() {
+        let mut template = TemplateFields::default();
+        template
+            .extra
+            .insert("provider_template_name".into(), json!("welcome"));
+        let body = serde_json::to_value(MessageContentFields {
+            template: Some(template),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            body,
+            json!({"template": {"provider_template_name": "welcome"}})
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_interactive() {
+        let mut content =
+            MessageContentFields::interactive(MessageContentFields::INTERACTIVE_KIND_CAROUSEL);
+        content
+            .interactive
+            .as_mut()
+            .unwrap()
+            .extra
+            .insert("cards".into(), json!([{"title": "One"}]));
+        let body = serde_json::to_value(content).unwrap();
+        assert_eq!(
+            body,
+            json!({
+                "interactive": {
+                    "kind": "carousel",
+                    "cards": [{"title": "One"}]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_parts() {
+        let body = serde_json::to_value(MessageContentFields {
+            parts: Some(vec![
+                MultipartPart {
+                    text: Some("hello".into()),
+                    url: None,
+                },
+                MultipartPart {
+                    text: None,
+                    url: Some("https://example.com/img.jpg".into()),
+                },
+            ]),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            body,
+            json!({"parts": [
+                {"text": "hello"},
+                {"url": "https://example.com/img.jpg"}
+            ]})
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_reply_to() {
+        let body = serde_json::to_value(MessageContentFields {
+            reply_to: Some("msg_abc".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(body, json!({"reply_to": "msg_abc"}));
+    }
+
+    #[test]
+    fn message_content_fields_serializes_effect() {
+        let body = serde_json::to_value(MessageContentFields {
+            effect: Some("slam".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(body, json!({"effect": "slam"}));
+    }
+
+    #[test]
+    fn message_content_fields_serializes_link_preview() {
+        let body = serde_json::to_value(MessageContentFields {
+            link_preview: Some(LinkPreview {
+                image_url: Some("https://example.com/thumb.jpg".into()),
+                title: Some("Example".into()),
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            body,
+            json!({"link_preview": {"imageUrl": "https://example.com/thumb.jpg", "title": "Example"}})
+        );
+    }
+
+    #[test]
+    fn send_message_serializes_flat_body() {
+        let send = SendMessage::new(
+            Recipient::identifier("+15551234567"),
+            MessageContentFields::text("hello"),
+        );
+        let body = serde_json::to_value(&send).unwrap();
+        assert_eq!(
+            body,
+            json!({
+                "to": "+15551234567",
+                "text": "hello"
+            })
+        );
+    }
+
+    #[test]
+    fn send_message_to_chat_serializes_flat_body() {
+        let send = SendMessageToChat::new("chat_1", MessageContentFields::text("hello"));
+        let body = serde_json::to_value(&send).unwrap();
+        assert_eq!(body, json!({"text": "hello"}));
+    }
+
+    #[test]
+    fn send_message_serializes_with_routing_controls() {
+        let send = SendMessage {
+            from: Some("+15551230001".into()),
+            to: Recipient::identifier("+15551234567"),
+            priority_id: Some("priority_1".into()),
+            channel_type: Some(crate::v4::types::ChannelType::Blooio),
+            hybrid: Some(Hybrid::On(true)),
+            content: MessageContentFields::text("hello"),
+            dry_run: Some(true),
+        };
+        let body = serde_json::to_value(&send).unwrap();
+        assert_eq!(
+            body,
+            json!({
+                "from": "+15551230001",
+                "to": "+15551234567",
+                "priority_id": "priority_1",
+                "channel_type": "blooio",
+                "hybrid": true,
+                "text": "hello",
+                "dry_run": true,
+            })
+        );
+    }
+
+    #[test]
+    fn hybrid_serializes_boolean_and_string() {
+        let on = serde_json::to_value(Hybrid::On(true)).unwrap();
+        assert_eq!(on, json!(true));
+
+        let number = serde_json::to_value(Hybrid::Number("+15551230001".into())).unwrap();
+        assert_eq!(number, json!("+15551230001"));
     }
 }

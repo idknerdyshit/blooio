@@ -3,7 +3,7 @@
 use blooio::BlooioCreds;
 use blooio::v4::Client;
 use blooio::v4::resources::messages::SendMessage;
-use blooio::v4::types::{MessageContent, Recipient};
+use blooio::v4::types::{MessageContentFields, Recipient};
 
 #[tokio::main]
 async fn main() -> blooio::Result<()> {
@@ -16,7 +16,7 @@ async fn main() -> blooio::Result<()> {
         .messages()
         .send(SendMessage::new(
             Recipient::identifier("+15551234567"),
-            MessageContent::text("hello from v4"),
+            MessageContentFields::text("hello from v4"),
         ))
         .await?;
     Ok(())

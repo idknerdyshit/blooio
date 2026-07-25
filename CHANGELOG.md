@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh the pinned v4 OpenAPI snapshot and document the new messaging-safety
+  webhook events and send-time safety/conversation-limit errors. Expose their
+  stable error codes and avoid retrying conversation-state `429` responses.
+- Align the breaking beta v4 API with the pinned schema: flatten message
+  content and remove `SenderSelector`, serialize recipients in their current
+  string/array/object forms, restructure send routing, correct create-chat
+  recipient serialization, and rename response channel and routing fields to
+  `address` and `alias`.
+
 ## [2.0.0-beta.0] - 2026-07-19
 
 ### Added

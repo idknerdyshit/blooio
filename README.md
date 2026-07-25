@@ -61,7 +61,7 @@ uses dedicated DTOs, and defaults to `https://api.blooio.com/v4`:
 use blooio::BlooioCreds;
 use blooio::v4::Client;
 use blooio::v4::resources::messages::SendMessage;
-use blooio::v4::types::{MessageContent, Recipient};
+use blooio::v4::types::{MessageContentFields, Recipient};
 
 # async fn demo() -> blooio::Result<()> {
 let client = Client::new()?;
@@ -71,7 +71,7 @@ let account = client.account(&creds);
 let _me = account.me().get().await?;
 let _sent = account.messages().send(SendMessage::new(
     Recipient::identifier("+15551234567"),
-    MessageContent::text("hello from v4"),
+    MessageContentFields::text("hello from v4"),
 )).await?;
 # Ok(()) }
 ```
@@ -287,9 +287,10 @@ cleartext.
 Transient failures from safe read operations are retried by default with
 jittered backoff. Mutating operations retry only when their `Operation`
 implementation explicitly declares that doing so is safe. Unknown or
-no-code `429` responses are treated as transient, but documented quota/cap
-`429` errors are not retried by default. Customize retry behavior with
-`ClientConfig::with_retry`, or pass `RetryPolicy::none()` to disable it.
+no-code `429` responses are treated as transient, but documented quota/cap and
+v4 conversation-state `429` errors are not retried by default. Customize retry
+behavior with `ClientConfig::with_retry`, or pass `RetryPolicy::none()` to
+disable it.
 
 Per-request transport options are available at the executor layer. Extra
 headers override operation headers except `Authorization`, which is always
@@ -403,6 +404,8 @@ use blooio::error::codes;
 
 if err.is_quota_error() {
     // A documented account/plan cap was reached; do not blindly retry.
+} else if err.is_conversation_limit_error() {
+    // A v4 conversation-state limit requires a recipient response.
 } else if err.code() == Some(codes::REPLY_TARGET_NOT_FOUND) {
     // The threaded-reply target no longer exists.
 }

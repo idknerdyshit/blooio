@@ -67,7 +67,7 @@ pub struct RoutingMetadata {
     pub mode: Option<String>,
     pub channel_type: Option<ChannelType>,
     pub number: Option<String>,
-    pub sender_key: Option<String>,
+    pub alias: Option<String>,
     pub priority_id: Option<String>,
     pub priority: Option<i64>,
     #[serde(flatten)]
@@ -113,6 +113,7 @@ pub struct MessageSendDetails {
     pub error: Option<BTreeMap<String, Value>>,
     pub fallback: Option<MessageFallback>,
     pub to: Option<String>,
+    pub from: Option<String>,
     pub dry_run: Option<bool>,
     pub would_send: Option<bool>,
     #[serde(default)]
@@ -163,75 +164,171 @@ pub struct ReactionResult {
 #[serde(untagged)]
 pub enum Recipient {
     /// One phone number or email address.
-    Identifier { identifier: String },
+    Identifier(String),
     /// Existing v4 contact.
     Contact { contact_id: String },
     /// Existing v4 group.
     Group { group_id: String },
     /// Multiple phone numbers or email addresses.
-    Identifiers { identifiers: Vec<String> },
+    Identifiers(Vec<String>),
     /// A raw list of identifiers accepted by the v4 wire format.
     List(Vec<String>),
     /// A raw identifier accepted by the v4 wire format.
     Raw(String),
 }
 
-/// Typed selector for the sending channel or priority.
+/// Hybrid sender: either `true`/`false` or a phone number string.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
-pub enum SenderSelector {
-    /// Select an exact technical channel.
-    Channel { id: String },
-    /// Select a hybrid sender by representative number.
-    Hybrid {
-        #[serde(rename = "type")]
-        kind: String,
-        number: String,
-    },
-    /// Select a numbered channel of a given type.
-    Number {
-        #[serde(rename = "type")]
-        channel_type: ChannelType,
-        number: String,
-    },
-    /// Select a non-numbered sender key.
-    SenderKey {
-        #[serde(rename = "type")]
-        channel_type: ChannelType,
-        sender_key: String,
-    },
-    /// Filter an optional priority by channel type.
-    ChannelType {
-        #[serde(rename = "type")]
-        channel_type: ChannelType,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        priority_id: Option<String>,
-    },
-    /// Select an explicit priority.
-    Priority { priority_id: String },
+pub enum Hybrid {
+    /// Boolean on/off flag.
+    On(bool),
+    /// A representative phone number string.
+    Number(String),
 }
 
-impl SenderSelector {
-    /// Select an exact technical channel id.
-    #[must_use]
-    pub fn channel(id: impl Into<String>) -> Self {
-        Self::Channel { id: id.into() }
-    }
+/// Rich link card fields.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RichLinkFields {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
 
-    /// Select the hybrid sender associated with a number.
+/// Interactive content wrapper for `WhatsApp` Business / RCS.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InteractiveFields {
+    pub kind: String,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Template content placeholder for `WhatsApp` Business.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct TemplateFields {
+    /// The template identifier returned by the template-creation endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_id: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Flat message content body matching the server's untagged request format.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct MessageContentFields {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<MultipartPart>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rich_link: Option<RichLinkFields>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poll: Option<super::PollContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interactive: Option<InteractiveFields>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<TemplateFields>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_preview: Option<LinkPreview>,
+}
+
+impl MessageContentFields {
+    /// Build plain text content.
     #[must_use]
-    pub fn hybrid(number: impl Into<String>) -> Self {
-        Self::Hybrid {
-            kind: "hybrid".to_owned(),
-            number: number.into(),
+    pub fn text(value: impl Into<String>) -> Self {
+        Self {
+            text: Some(value.into()),
+            ..Default::default()
         }
     }
 
-    /// Select an explicit priority id.
+    /// Build media content from public URLs.
+    ///
+    /// Requires at least one URL; the server rejects empty attachment arrays with `422`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `attachments` is empty.
     #[must_use]
-    pub fn priority(priority_id: impl Into<String>) -> Self {
-        Self::Priority {
-            priority_id: priority_id.into(),
+    pub fn media(attachments: &[impl AsRef<str>]) -> Self {
+        assert!(!attachments.is_empty(), "media requires at least one URL");
+        Self {
+            attachments: Some(attachments.iter().map(|s| s.as_ref().to_owned()).collect()),
+            ..Default::default()
+        }
+    }
+
+    /// Build a rich link card with an optional title.
+    #[must_use]
+    pub fn rich_link(url: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            rich_link: Some(RichLinkFields {
+                url: url.into(),
+                title: Some(title.into()),
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Build poll content.
+    ///
+    /// Requires at least two options; the server rejects fewer with `422`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `options` has fewer than two items.
+    #[must_use]
+    pub fn poll(title: impl Into<String>, options: &[impl AsRef<str>]) -> Self {
+        assert!(options.len() >= 2, "poll requires at least two options");
+        Self {
+            poll: Some(super::PollContent {
+                title: Some(title.into()),
+                options: options.iter().map(|s| s.as_ref().to_owned()).collect(),
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Build template content for `WhatsApp` Business.
+    #[must_use]
+    pub fn template(template_id: impl Into<String>) -> Self {
+        Self {
+            template: Some(TemplateFields {
+                template_id: Some(template_id.into()),
+                extra: BTreeMap::new(),
+            }),
+            ..Default::default()
+        }
+    }
+
+    /// Well-known interactive content kinds for `WhatsApp` Business / RCS.
+    ///
+    /// `kind` values accepted by the server:
+    /// - `"carousel"` — a scrollable card carousel
+    /// - `"product"` — a single product card
+    /// - `"product_list"` — a product catalog list
+    pub const INTERACTIVE_KIND_CAROUSEL: &'static str = "carousel";
+    pub const INTERACTIVE_KIND_PRODUCT: &'static str = "product";
+    pub const INTERACTIVE_KIND_PRODUCT_LIST: &'static str = "product_list";
+
+    /// Build interactive content for `WhatsApp` Business / RCS.
+    ///
+    /// Use one of the `INTERACTIVE_KIND_*` constants for well-known kinds,
+    /// or pass a custom string for provider-specific values.
+    #[must_use]
+    pub fn interactive(kind: impl Into<String>) -> Self {
+        Self {
+            interactive: Some(InteractiveFields {
+                kind: kind.into(),
+                extra: BTreeMap::new(),
+            }),
+            ..Default::default()
         }
     }
 }
@@ -240,9 +337,12 @@ impl Recipient {
     /// Address one phone number or email.
     #[must_use]
     pub fn identifier(value: impl Into<String>) -> Self {
-        Self::Identifier {
-            identifier: value.into(),
-        }
+        Self::Identifier(value.into())
+    }
+    /// Address multiple phone numbers or emails.
+    #[must_use]
+    pub fn identifiers(values: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self::Identifiers(values.into_iter().map(Into::into).collect())
     }
     /// Address a v4 contact.
     #[must_use]
@@ -256,90 +356,6 @@ impl Recipient {
     pub fn group(value: impl Into<String>) -> Self {
         Self::Group {
             group_id: value.into(),
-        }
-    }
-}
-
-/// Typed v4 message content.
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum MessageContent {
-    /// Plain text content.
-    Text {
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply_to: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        effect: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        link_preview: Option<LinkPreview>,
-    },
-    /// One or more public media URLs.
-    Media {
-        attachments: Vec<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        caption: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply_to: Option<String>,
-    },
-    /// Ordered text and media parts.
-    Multipart {
-        parts: Vec<MultipartPart>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply_to: Option<String>,
-    },
-    /// A rich link card.
-    RichLink {
-        url: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        title: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply_to: Option<String>,
-    },
-    /// `WhatsApp` Business or RCS interactive content.
-    Interactive { kind: String },
-    /// Poll content.
-    Poll { title: String, options: Vec<String> },
-}
-
-impl MessageContent {
-    /// Build plain text content.
-    #[must_use]
-    pub fn text(value: impl Into<String>) -> Self {
-        Self::Text {
-            text: value.into(),
-            reply_to: None,
-            effect: None,
-            link_preview: None,
-        }
-    }
-    /// Build media content from public URLs.
-    #[must_use]
-    pub fn media(attachments: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self::Media {
-            attachments: attachments.into_iter().map(Into::into).collect(),
-            caption: None,
-            reply_to: None,
-        }
-    }
-    /// Build a rich link.
-    #[must_use]
-    pub fn rich_link(url: impl Into<String>) -> Self {
-        Self::RichLink {
-            url: url.into(),
-            title: None,
-            reply_to: None,
-        }
-    }
-    /// Build poll content.
-    #[must_use]
-    pub fn poll(
-        title: impl Into<String>,
-        options: impl IntoIterator<Item = impl Into<String>>,
-    ) -> Self {
-        Self::Poll {
-            title: title.into(),
-            options: options.into_iter().map(Into::into).collect(),
         }
     }
 }

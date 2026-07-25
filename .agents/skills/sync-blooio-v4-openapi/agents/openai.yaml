@@ -1,0 +1,4 @@
+interface:
+  display_name: "Blooio v4 OpenAPI Sync"
+  short_description: "Sync the pinned v4 spec and Rust SDK"
+  default_prompt: "Use $sync-blooio-v4-openapi to check the upstream Blooio v4 OpenAPI spec and update this SDK if it changed."

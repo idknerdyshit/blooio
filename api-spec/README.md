@@ -30,9 +30,9 @@ The official v4 export identifies the API as version `4.0.0-beta` and uses
 
 - Source: official Blooio v4 OpenAPI export, <https://api.blooio.com/v4/openapi.json>
 - Provider: Blooio
-- Retrieved: 2026-07-17
+- Retrieved: 2026-07-25
 - Snapshot version: `4.0.0-beta` (see `blooio-v4.version`)
-- Snapshot SHA-256: `afa4966bb39fd22d4e496f2b3d37a8367758a56b360fad37259a21f2871213c3`
+- Snapshot SHA-256: `dc7d2fe46f12c6bfed785eb0bb25005a36de7784465bd14995625776faebc95d`
 
 This is an exact byte-for-byte snapshot of the provider's JSON export. It is
 available to Codex and maintainers without a network request. Do not generate

@@ -136,14 +136,26 @@ impl Error {
         matches!(self, Error::Api(err) if err.is_inbound_only_error())
     }
 
+    /// Whether this is a documented v4 messaging-safety API error.
+    #[must_use]
+    pub fn is_messaging_safety_error(&self) -> bool {
+        matches!(self, Error::Api(err) if err.is_messaging_safety_error())
+    }
+
+    /// Whether this is a documented v4 conversation-state limit error.
+    #[must_use]
+    pub fn is_conversation_limit_error(&self) -> bool {
+        matches!(self, Error::Api(err) if err.is_conversation_limit_error())
+    }
+
     /// Whether retrying this request may succeed.
     ///
     /// `true` for transport failures (connection/DNS/TLS/timeout) and for the
     /// transient API statuses `408`, `425`, unknown/no-code `429`, and `5xx`.
-    /// Documented quota/cap `429` errors are not retried by default because
-    /// another immediate attempt cannot clear the account or plan cap. Encoding,
-    /// decoding, and webhook-verification errors — and 4xx other than the
-    /// listed transient ones — are not retryable.
+    /// Documented quota/cap and conversation-state `429` errors are not retried
+    /// by default because another immediate attempt cannot clear them. Encoding,
+    /// decoding, and webhook-verification errors — and 4xx other than the listed
+    /// transient ones — are not retryable.
     #[must_use]
     pub fn is_retryable(&self) -> bool {
         match self {
@@ -344,10 +356,28 @@ impl ApiError {
             .is_some_and(codes::is_inbound_only_error)
     }
 
+    /// Whether this error is one of the documented v4 messaging-safety API
+    /// errors.
+    #[must_use]
+    pub fn is_messaging_safety_error(&self) -> bool {
+        self.code
+            .as_deref()
+            .is_some_and(codes::is_messaging_safety_error)
+    }
+
+    /// Whether this error is one of the documented v4 conversation-state
+    /// limit errors.
+    #[must_use]
+    pub fn is_conversation_limit_error(&self) -> bool {
+        self.code
+            .as_deref()
+            .is_some_and(codes::is_conversation_limit_error)
+    }
+
     fn is_retryable(&self) -> bool {
         match self.status {
             408 | 425 => true,
-            429 => !self.is_quota_error(),
+            429 => !self.is_quota_error() && !self.is_conversation_limit_error(),
             status => (500..600).contains(&status),
         }
     }
@@ -448,7 +478,7 @@ impl fmt::Debug for ApiErrorDetails {
     }
 }
 
-/// Machine-readable Blooio API error codes documented by the v2 API.
+/// Documented machine-readable Blooio API error codes.
 pub mod codes {
     /// Sending would exceed the organization's new-contact outbound cap.
     pub const OUTBOUND_LIMIT_REACHED: &str = "outbound_limit_reached";
@@ -468,6 +498,20 @@ pub mod codes {
     pub const REPLY_TARGET_NOT_SUPPORTED: &str = "reply_target_not_supported";
     /// The reply target could not be found.
     pub const REPLY_TARGET_NOT_FOUND: &str = "reply_target_not_found";
+    /// The sending number is blocked pending messaging-safety review.
+    pub const SAFETY_ACCOUNT_REVIEW: &str = "safety_account_review";
+    /// Outbound messaging is restricted to conversations with prior inbound.
+    pub const SAFETY_REPLY_ONLY: &str = "safety_reply_only";
+    /// Brand-new conversations are temporarily paused.
+    pub const SAFETY_NEW_CONVERSATIONS_PAUSED: &str = "safety_new_conversations_paused";
+    /// Rich content is restricted until the recipient replies.
+    pub const CONVERSATION_CONTENT_RESTRICTED: &str = "conversation_content_restricted";
+    /// The pre-reply message allowance has been exhausted.
+    pub const CONVERSATION_AWAITING_REPLY: &str = "conversation_awaiting_reply";
+    /// The consecutive-message cap since the last reply has been reached.
+    pub const CONVERSATION_STREAK_LIMIT: &str = "conversation_streak_limit";
+    /// The single re-engagement message for an inactive conversation was used.
+    pub const CONVERSATION_INACTIVE_PAUSED: &str = "conversation_inactive_paused";
 
     /// Whether `code` is a documented quota/cap error code.
     #[must_use]
@@ -498,8 +542,33 @@ pub mod codes {
         code == INBOUND_ONLY_NO_PRIOR_INBOUND
     }
 
+    /// Whether `code` is a documented v4 messaging-safety error code.
+    #[must_use]
+    pub fn is_messaging_safety_error(code: &str) -> bool {
+        matches!(
+            code,
+            SAFETY_ACCOUNT_REVIEW
+                | SAFETY_REPLY_ONLY
+                | SAFETY_NEW_CONVERSATIONS_PAUSED
+                | CONVERSATION_CONTENT_RESTRICTED
+        )
+    }
+
+    /// Whether `code` is a documented v4 conversation-state limit error code.
+    #[must_use]
+    pub fn is_conversation_limit_error(code: &str) -> bool {
+        matches!(
+            code,
+            CONVERSATION_AWAITING_REPLY | CONVERSATION_STREAK_LIMIT | CONVERSATION_INACTIVE_PAUSED
+        )
+    }
+
     pub(crate) fn is_known(code: &str) -> bool {
-        is_quota_error(code) || is_reply_target_error(code) || is_inbound_only_error(code)
+        is_quota_error(code)
+            || is_reply_target_error(code)
+            || is_inbound_only_error(code)
+            || is_messaging_safety_error(code)
+            || is_conversation_limit_error(code)
     }
 }
 
@@ -640,7 +709,28 @@ mod tests {
         assert!(codes::is_inbound_only_error(
             codes::INBOUND_ONLY_NO_PRIOR_INBOUND
         ));
+        assert!(codes::is_messaging_safety_error(
+            codes::CONVERSATION_CONTENT_RESTRICTED
+        ));
+        assert!(codes::is_conversation_limit_error(
+            codes::CONVERSATION_AWAITING_REPLY
+        ));
         assert!(!codes::is_quota_error(codes::REPLY_TARGET_NOT_FOUND));
+    }
+
+    #[test]
+    fn conversation_state_limits_are_not_retryable() {
+        let err = Error::Api(ApiError::from_schema(
+            429,
+            Some(codes::CONVERSATION_STREAK_LIMIT.to_owned()),
+            None,
+            None,
+            ApiErrorDetails::default(),
+            None,
+        ));
+
+        assert!(err.is_conversation_limit_error());
+        assert!(!err.is_retryable());
     }
 }
 

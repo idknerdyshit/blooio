@@ -1,5 +1,5 @@
 use super::ChannelType;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -38,7 +38,7 @@ pub struct ChatCreated {
 
 /// Poll content returned by the poll-creation endpoint.
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct PollContent {
     pub title: Option<String>,
     #[serde(default)]

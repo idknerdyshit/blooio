@@ -62,17 +62,19 @@ fn message_fields_are_typed_and_unknown_fields_are_forward_compatible() {
 #[test]
 fn channel_chat_contact_group_and_priority_fields_are_typed() {
     let channel: Channel = serde_json::from_value(json!({
-        "id": "ch_1", "type": "sms", "display_address": "+15551234567",
-        "sender_key": "sender_1", "status": "active", "created_at": 1,
+        "id": "ch_1", "type": "sms", "address": "+15551234567",
+        "alias": "sender_1", "status": "active", "created_at": 1,
         "capabilities": {"protocols": ["sms"], "content": ["text"], "actions": ["send"], "interactive": [], "gates": []}
     }))
     .unwrap();
-    assert_eq!(channel.display_address.as_deref(), Some("+15551234567"));
+    assert_eq!(channel.address.as_deref(), Some("+15551234567"));
     assert_eq!(
         channel.channel_type,
         Some(ChannelType::Unknown("sms".into()))
     );
-    assert_eq!(channel.sender_key.as_deref(), Some("sender_1"));
+    assert_eq!(channel.alias.as_deref(), Some("sender_1"));
+    assert!(!channel.extra.contains_key("address"));
+    assert!(!channel.extra.contains_key("alias"));
     assert_eq!(channel.capabilities.unwrap().protocols, ["sms"]);
 
     let chat: Chat = serde_json::from_value(json!({
@@ -106,11 +108,21 @@ fn channel_chat_contact_group_and_priority_fields_are_typed() {
 
     let priority: Priority = serde_json::from_value(json!({
         "id": "priority_1", "name": null, "is_default": true, "created_at": 1, "updated_at": 2,
-        "channels": [{"channel_id": "ch_1", "type": "sms", "priority": 1}]
+        "channels": [{
+            "channel_id": "ch_1", "type": "sms", "address": "+15551234567",
+            "alias": "sender_1", "priority": 1
+        }]
     }))
     .unwrap();
     assert!(priority.is_default.unwrap());
     assert_eq!(priority.channels[0].priority, Some(1));
+    assert_eq!(
+        priority.channels[0].address.as_deref(),
+        Some("+15551234567")
+    );
+    assert_eq!(priority.channels[0].alias.as_deref(), Some("sender_1"));
+    assert!(!priority.channels[0].extra.contains_key("address"));
+    assert!(!priority.channels[0].extra.contains_key("alias"));
 }
 
 #[test]
@@ -121,13 +133,16 @@ fn polling_routing_timeline_event_and_webhook_fields_are_typed() {
         "group_id": "grp_1", "hybrid": {"phase": "one"}, "error": null,
         "fallback": {"recommended": true, "reason": "retry"}, "to": "+1555", "dry_run": false,
         "would_send": true, "preview": {"text": "hello"}, "poll": {"title": "Lunch?", "options": ["Yes", "No"]},
-        "routing": {"mode": "priority", "channel_type": "sms", "number": "+1555", "sender_key": "key", "priority_id": "priority_1", "priority": 1}
+        "routing": {"mode": "priority", "channel_type": "sms", "number": "+1555", "alias": "key", "priority_id": "priority_1", "priority": 1}
     }))
     .unwrap();
     let MessageSendResult::Message(send) = send else {
         panic!("expected single send")
     };
-    assert_eq!(send.routing.unwrap().priority, Some(1));
+    let routing = send.routing.unwrap();
+    assert_eq!(routing.priority, Some(1));
+    assert_eq!(routing.alias.as_deref(), Some("key"));
+    assert!(!routing.extra.contains_key("alias"));
     assert_eq!(send.poll.unwrap().options, ["Yes", "No"]);
 
     let results: PollResults = serde_json::from_value(json!({"poll_id": "poll_1", "chat_id": "chat_1", "title": "Lunch?", "options": [{"text": "Yes", "votes": 2}], "total_votes": 2})).unwrap();
@@ -152,7 +167,9 @@ fn message_timestamp_and_channel_naming_regressions_are_enforced() {
     assert!(!message.extra.contains_key("created_at"));
 
     let channel: Channel =
-        serde_json::from_value(json!({"display_address": "+1555", "sender_key": "key"})).unwrap();
-    assert_eq!(channel.display_address.as_deref(), Some("+1555"));
-    assert_eq!(channel.sender_key.as_deref(), Some("key"));
+        serde_json::from_value(json!({"address": "+1555", "alias": "key"})).unwrap();
+    assert_eq!(channel.address.as_deref(), Some("+1555"));
+    assert_eq!(channel.alias.as_deref(), Some("key"));
+    assert!(!channel.extra.contains_key("address"));
+    assert!(!channel.extra.contains_key("alias"));
 }

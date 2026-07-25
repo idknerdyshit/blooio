@@ -5,8 +5,8 @@ use super::impl_v4_operation;
 use crate::v4::{
     CursorPaginator,
     types::{
-        Channel, ChannelCapabilities, ChannelType, ItemEnvelope, ListEnvelope, MessageContent,
-        MessageSendResult,
+        Channel, ChannelCapabilities, ChannelType, ItemEnvelope, ListEnvelope,
+        MessageContentFields, MessageSendResult,
     },
 };
 use crate::{
@@ -103,7 +103,8 @@ pub struct SendMessageToChannel {
     #[serde(skip)]
     pub channel_id: String,
     pub to: crate::v4::types::Recipient,
-    pub content: MessageContent,
+    #[serde(flatten)]
+    pub content: MessageContentFields,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dry_run: Option<bool>,
 }
@@ -113,7 +114,7 @@ impl SendMessageToChannel {
     pub fn new(
         channel_id: impl Into<String>,
         to: crate::v4::types::Recipient,
-        content: MessageContent,
+        content: MessageContentFields,
     ) -> Self {
         Self {
             channel_id: channel_id.into(),
@@ -142,8 +143,12 @@ impl_v4_operation!(SendMessageToChannel);
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::ListChannels;
-    use crate::{Operation, v4::types::ChannelType};
+    use super::{ListChannels, SendMessageToChannel};
+    use crate::{
+        Operation,
+        v4::types::{ChannelType, MessageContentFields, Recipient},
+    };
+    use serde_json::json;
 
     #[test]
     fn list_channels_preserves_an_unknown_channel_filter() {
@@ -153,6 +158,17 @@ mod tests {
         };
 
         assert_eq!(operation.query(), [("type", "future_provider".into())]);
+    }
+
+    #[test]
+    fn send_message_to_channel_serializes_flat_body() {
+        let send = SendMessageToChannel::new(
+            "channel_1",
+            Recipient::identifier("+15551234567"),
+            MessageContentFields::text("hello"),
+        );
+        let body = serde_json::to_value(&send).unwrap();
+        assert_eq!(body, json!({"to": "+15551234567", "text": "hello"}));
     }
 }
 
