@@ -78,7 +78,10 @@ let _sent = account.messages().send(SendMessage::new(
 
 V4 list operations use opaque cursor pagination. Contacts additionally expose
 offset-based search. The v4 webhook envelope is available when both `api-v4`
-and `webhooks` are enabled and reuses the root signature verifier.
+and `webhooks` are enabled and reuses the root signature verifier. The channel
+resource also exposes Blooio number inventory, idempotent number purchases,
+purchase-status polling, and number removal. Purchases are asynchronous and
+billable, so callers must supply a stable unique idempotency key.
 
 ## Quick start (async)
 

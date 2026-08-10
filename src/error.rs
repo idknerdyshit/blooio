@@ -124,6 +124,12 @@ impl Error {
         matches!(self, Error::Api(err) if err.is_quota_error())
     }
 
+    /// Whether this is a documented number-purchase API error.
+    #[must_use]
+    pub fn is_number_purchase_error(&self) -> bool {
+        matches!(self, Error::Api(err) if err.is_number_purchase_error())
+    }
+
     /// Whether this is a documented threaded-reply target API error.
     #[must_use]
     pub fn is_reply_target_error(&self) -> bool {
@@ -338,6 +344,14 @@ impl ApiError {
         self.code.as_deref().is_some_and(codes::is_quota_error)
     }
 
+    /// Whether this error is one of the documented number-purchase API errors.
+    #[must_use]
+    pub fn is_number_purchase_error(&self) -> bool {
+        self.code
+            .as_deref()
+            .is_some_and(codes::is_number_purchase_error)
+    }
+
     /// Whether this error is one of the documented threaded-reply target API
     /// errors.
     #[must_use]
@@ -512,13 +526,33 @@ pub mod codes {
     pub const CONVERSATION_STREAK_LIMIT: &str = "conversation_streak_limit";
     /// The single re-engagement message for an inactive conversation was used.
     pub const CONVERSATION_INACTIVE_PAUSED: &str = "conversation_inactive_paused";
+    /// A number purchase requires a saved payment method.
+    pub const NO_PAYMENT_METHOD: &str = "no_payment_method";
+    /// The payment for a number purchase failed.
+    pub const PAYMENT_FAILED: &str = "payment_failed";
+    /// The organization already owns its allowed shared number.
+    pub const SHARED_NUMBER_LIMIT: &str = "shared_number_limit";
+    /// A number purchase exceeds the organization's per-order line limit.
+    pub const LINE_LIMIT_EXCEEDED: &str = "line_limit_exceeded";
 
     /// Whether `code` is a documented quota/cap error code.
     #[must_use]
     pub fn is_quota_error(code: &str) -> bool {
         matches!(
             code,
-            OUTBOUND_LIMIT_REACHED | NEW_CONVERSATION_LIMIT_REACHED
+            OUTBOUND_LIMIT_REACHED
+                | NEW_CONVERSATION_LIMIT_REACHED
+                | SHARED_NUMBER_LIMIT
+                | LINE_LIMIT_EXCEEDED
+        )
+    }
+
+    /// Whether `code` is a documented number-purchase error code.
+    #[must_use]
+    pub fn is_number_purchase_error(code: &str) -> bool {
+        matches!(
+            code,
+            NO_PAYMENT_METHOD | PAYMENT_FAILED | SHARED_NUMBER_LIMIT | LINE_LIMIT_EXCEEDED
         )
     }
 
@@ -715,6 +749,8 @@ mod tests {
         assert!(codes::is_conversation_limit_error(
             codes::CONVERSATION_AWAITING_REPLY
         ));
+        assert!(codes::is_number_purchase_error(codes::NO_PAYMENT_METHOD));
+        assert!(codes::is_quota_error(codes::LINE_LIMIT_EXCEEDED));
         assert!(!codes::is_quota_error(codes::REPLY_TARGET_NOT_FOUND));
     }
 

@@ -35,13 +35,33 @@ fn channel_types_match_the_schema_and_preserve_unknown_values() {
 }
 
 #[test]
+fn webhook_scope_is_forward_compatible_and_api_key_is_redacted() {
+    let webhook: Webhook = serde_json::from_value(json!({
+        "id": "wh_1",
+        "scope": "api_key",
+        "api_key": "bl_live_sensitive"
+    }))
+    .unwrap();
+    assert_eq!(webhook.scope, Some(WebhookScope::ApiKey));
+    let rendered = format!("{webhook:?}");
+    assert!(!rendered.contains("bl_live_sensitive"));
+    assert!(rendered.contains("[REDACTED]"));
+
+    let unknown: WebhookScope = serde_json::from_value(json!("future_scope")).unwrap();
+    assert_eq!(unknown, WebhookScope::Unknown("future_scope".into()));
+}
+
+#[test]
 fn message_fields_are_typed_and_unknown_fields_are_forward_compatible() {
     let message: Message = serde_json::from_value(json!({
         "id": "msg_1", "chat_id": "chat_1", "channel_id": "ch_1",
         "channel_type": "blooio", "protocol": "imessage", "direction": "outbound",
         "type": "text", "text": "hello", "status": "delivered",
         "provider_message_id": "provider_1", "reply_to_message_id": null,
-        "error": {"code": "none"}, "created_at": 1, "updated_at": 2,
+        "error": {"code": "none"},
+        "attachments": [{"url": "https://example.com/media", "media_type": "image/png", "size": 12, "caption": "photo"}],
+        "interactive": {"role": "reply", "kind": "quick_reply", "chosen": ["Yes"]},
+        "created_at": 1, "updated_at": 2,
         "future_field": true
     }))
     .unwrap();
@@ -54,6 +74,8 @@ fn message_fields_are_typed_and_unknown_fields_are_forward_compatible() {
     assert_eq!(message.created_at, Some(1));
     assert_eq!(message.updated_at, Some(2));
     assert_eq!(message.error.unwrap()["code"], "none");
+    assert_eq!(message.attachments[0].size, Some(12));
+    assert_eq!(message.interactive.as_ref().unwrap()["role"], "reply");
     assert_eq!(message.extra["future_field"], true);
     assert!(!message.extra.contains_key("protocol"));
     assert!(!message.extra.contains_key("created_at"));

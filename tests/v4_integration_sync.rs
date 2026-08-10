@@ -8,6 +8,8 @@
     clippy::print_stdout
 )]
 
+use blooio::v4::resources::channels::{PurchaseBlooioNumbers, RemoveBlooioNumber};
+use blooio::v4::types::BlooioPurchaseStatus;
 use blooio::v4::{BlockingClient, DEFAULT_BASE_URL};
 use blooio::{BlooioCreds, ClientConfig};
 use httpmock::prelude::*;
@@ -54,4 +56,54 @@ fn cursor_paginator_is_a_blocking_iterator() {
     first.assert();
     assert_eq!(pages.len(), 1);
     assert_eq!(pages[0].as_ref().unwrap().len(), 1);
+}
+
+#[test]
+fn blooio_number_purchase_status_and_removal_are_mirrored() {
+    let server = MockServer::start();
+    let purchase = server.mock(|when, then| {
+        when.method(POST)
+            .path("/channels/blooio/purchases")
+            .header("idempotency-key", "purchase-test-1")
+            .json_body(serde_json::json!({"plan": "shared"}));
+        then.status(202).json_body(serde_json::json!({
+            "data": {"purchase_id": "purchase_1", "status": "provisioning"}
+        }));
+    });
+    let status = server.mock(|when, then| {
+        when.method(GET)
+            .path("/channels/blooio/purchases/purchase_1");
+        then.status(200).json_body(serde_json::json!({
+            "data": {"purchase_id": "purchase_1", "status": "completed", "allocations": []}
+        }));
+    });
+    let remove = server.mock(|when, then| {
+        when.method(DELETE)
+            .path("/channels/ch_1")
+            .json_body(serde_json::json!({"reasons": ["no_longer_needed"]}));
+        then.status(200).json_body(serde_json::json!({
+            "data": {"phone_number": "+14155550100", "channel_id": "ch_1", "reasons": ["no_longer_needed"]}
+        }));
+    });
+
+    let client =
+        BlockingClient::from_config(ClientConfig::new().with_base_url(server.base_url())).unwrap();
+    let creds = BlooioCreds::new("test-key");
+    let channels = client.account(&creds).channels();
+    let accepted = channels
+        .purchase(PurchaseBlooioNumbers::new("shared", "purchase-test-1"))
+        .unwrap();
+    assert_eq!(
+        accepted.data.status,
+        Some(BlooioPurchaseStatus::Provisioning)
+    );
+    let completed = channels.purchase_status("purchase_1").unwrap();
+    assert_eq!(completed.data.status, Some(BlooioPurchaseStatus::Completed));
+    let removed = channels
+        .remove(RemoveBlooioNumber::new("ch_1", ["no_longer_needed"]))
+        .unwrap();
+    assert_eq!(removed.data.phone_number.as_deref(), Some("+14155550100"));
+    purchase.assert();
+    status.assert();
+    remove.assert();
 }

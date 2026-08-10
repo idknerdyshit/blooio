@@ -22,17 +22,17 @@ No v2 endpoints are deliberately excluded or manually corrected.
 The official v4 export identifies the API as version `4.0.0-beta` and uses
 `https://api.blooio.com/v4` as its base URL.
 
-- Paths/operations: 59 / 87
-- Implemented operations covered by Rust: 78
+- Paths/operations: 62 / 91
+- Implemented operations covered by Rust: 82
 - Planned, deliberately non-callable operations: 9
 
 ## Provenance
 
 - Source: official Blooio v4 OpenAPI export, <https://api.blooio.com/v4/openapi.json>
 - Provider: Blooio
-- Retrieved: 2026-07-25
+- Retrieved: 2026-08-10
 - Snapshot version: `4.0.0-beta` (see `blooio-v4.version`)
-- Snapshot SHA-256: `dc7d2fe46f12c6bfed785eb0bb25005a36de7784465bd14995625776faebc95d`
+- Snapshot SHA-256: `d80c2ebc6948c631a54e22c9a60bf51ea72569242b7c0df0e19d0f2b8196a775`
 
 This is an exact byte-for-byte snapshot of the provider's JSON export. It is
 available to Codex and maintainers without a network request. Do not generate

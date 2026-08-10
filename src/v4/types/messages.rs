@@ -40,8 +40,23 @@ pub struct Message {
     pub provider_message_id: Option<String>,
     pub reply_to_message_id: Option<String>,
     pub error: Option<BTreeMap<String, Value>>,
+    #[serde(default)]
+    pub attachments: Vec<MessageAttachment>,
+    pub interactive: Option<BTreeMap<String, Value>>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// One ordered attachment returned with a message.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MessageAttachment {
+    pub url: Option<String>,
+    pub media_type: Option<String>,
+    pub size: Option<u64>,
+    pub caption: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }

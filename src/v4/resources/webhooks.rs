@@ -39,14 +39,16 @@ impl crate::Operation for ListWebhooks {
 impl_v4_operation!(ListWebhooks);
 
 /// Create a webhook.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct CreateWebhook {
     pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Retired event filter. Omit this or send only `["*"]`.
     pub event_types: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// API key used to scope delivery, redacted from diagnostics.
+    pub api_key: Option<crate::Secret<String>>,
+    /// Integration identifier used to scope delivery.
+    pub integration_id: Option<String>,
     pub channel_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_type: Option<ChannelType>,
 }
 impl CreateWebhook {
@@ -56,9 +58,27 @@ impl CreateWebhook {
         Self {
             url: url.into(),
             event_types: None,
+            api_key: None,
+            integration_id: None,
             channel_id: None,
             channel_type: None,
         }
+    }
+
+    /// Scope delivery to lines owned by one API key.
+    #[must_use]
+    pub fn scope_to_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(crate::Secret::new(api_key.into()));
+        self.integration_id = None;
+        self
+    }
+
+    /// Scope delivery to lines owned by one integration.
+    #[must_use]
+    pub fn scope_to_integration(mut self, integration_id: impl Into<String>) -> Self {
+        self.integration_id = Some(integration_id.into());
+        self.api_key = None;
+        self
     }
 }
 impl crate::Operation for CreateWebhook {
@@ -68,7 +88,29 @@ impl crate::Operation for CreateWebhook {
         "/webhooks".into()
     }
     fn body(&self) -> Result<Option<Vec<u8>>> {
-        json_body(self)
+        #[derive(Serialize)]
+        struct Body<'a> {
+            url: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            event_types: Option<&'a [String]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            api_key: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            integration_id: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            channel_id: Option<&'a str>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            channel_type: Option<&'a ChannelType>,
+        }
+
+        json_body(&Body {
+            url: &self.url,
+            event_types: self.event_types.as_deref(),
+            api_key: self.api_key.as_ref().map(|value| value.expose().as_str()),
+            integration_id: self.integration_id.as_deref(),
+            channel_id: self.channel_id.as_deref(),
+            channel_type: self.channel_type.as_ref(),
+        })
     }
 }
 impl_v4_operation!(CreateWebhook);
@@ -175,6 +217,36 @@ impl crate::Operation for ReplayWebhookDelivery {
     }
 }
 impl_v4_operation!(ReplayWebhookDelivery);
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::CreateWebhook;
+    use crate::Operation;
+    use serde_json::json;
+
+    #[test]
+    fn webhook_scope_body_is_typed_and_debug_redacts_api_keys() {
+        let operation =
+            CreateWebhook::new("https://example.com/hook").scope_to_api_key("bl_live_sensitive");
+        let body: serde_json::Value =
+            serde_json::from_slice(&operation.body().unwrap().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"url": "https://example.com/hook", "api_key": "bl_live_sensitive"})
+        );
+        assert!(!format!("{operation:?}").contains("bl_live_sensitive"));
+
+        let integration =
+            CreateWebhook::new("https://example.com/hook").scope_to_integration("int_1");
+        let body: serde_json::Value =
+            serde_json::from_slice(&integration.body().unwrap().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"url": "https://example.com/hook", "integration_id": "int_1"})
+        );
+    }
+}
 
 /// Webhook collection handle.
 #[derive(Debug)]

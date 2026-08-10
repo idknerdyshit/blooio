@@ -1,5 +1,5 @@
 use super::ChannelType;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -64,4 +64,152 @@ pub struct ChannelCapabilities {
     pub gates: Vec<String>,
     #[serde(flatten)]
     pub capabilities: BTreeMap<String, Value>,
+}
+
+/// Blooio number inventory family.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum BlooioNumberType {
+    /// Shared Blooio line.
+    Shared,
+    /// Dedicated Blooio line.
+    Dedicated,
+    /// Inbound-only Blooio line.
+    Inbound,
+    /// A future inventory family preserved for forward compatibility.
+    Unknown(String),
+}
+
+impl BlooioNumberType {
+    pub(crate) fn wire_value(&self) -> &str {
+        match self {
+            Self::Shared => "shared",
+            Self::Dedicated => "dedicated",
+            Self::Inbound => "inbound",
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
+impl Serialize for BlooioNumberType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.wire_value())
+    }
+}
+
+impl<'de> Deserialize<'de> for BlooioNumberType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "shared" => Self::Shared,
+            "dedicated" => Self::Dedicated,
+            "inbound" => Self::Inbound,
+            _ => Self::Unknown(value),
+        })
+    }
+}
+
+/// One provider-defined available Blooio number or area-code quote item.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AvailableBlooioNumber {
+    #[serde(flatten)]
+    pub fields: BTreeMap<String, Value>,
+}
+
+/// Available Blooio number inventory or area-code quote response.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AvailableBlooioNumbers {
+    #[serde(default)]
+    pub data: Vec<AvailableBlooioNumber>,
+    pub matched_count: Option<u32>,
+    pub custom_order_count: Option<u32>,
+    #[serde(default)]
+    pub has_more: bool,
+    pub next_cursor: Option<String>,
+}
+
+impl crate::v4::CursorListing for AvailableBlooioNumbers {
+    type Item = AvailableBlooioNumber;
+
+    fn into_cursor_page(self) -> crate::v4::CursorPage<Self::Item> {
+        crate::v4::CursorPage {
+            items: self.data,
+            has_more: self.has_more,
+            next_cursor: self.next_cursor,
+        }
+    }
+}
+
+/// State of an asynchronous Blooio number purchase.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum BlooioPurchaseStatus {
+    /// Accepted but not yet provisioning.
+    Pending,
+    /// Provisioning is in progress.
+    Provisioning,
+    /// Cardholder authentication is required.
+    ActionRequired,
+    /// Provisioning completed.
+    Completed,
+    /// The purchase failed terminally.
+    Failed,
+    /// A future purchase state preserved for forward compatibility.
+    Unknown(String),
+}
+
+impl<'de> Deserialize<'de> for BlooioPurchaseStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "pending" => Self::Pending,
+            "provisioning" => Self::Provisioning,
+            "action_required" => Self::ActionRequired,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            _ => Self::Unknown(value),
+        })
+    }
+}
+
+/// A provider-defined allocation created by a number purchase.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BlooioNumberAllocation {
+    #[serde(flatten)]
+    pub fields: BTreeMap<String, Value>,
+}
+
+/// Accepted or current state of a Blooio number purchase.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BlooioPurchase {
+    pub purchase_id: Option<String>,
+    pub status: Option<BlooioPurchaseStatus>,
+    pub action_url: Option<String>,
+    #[serde(default)]
+    pub allocations: Vec<BlooioNumberAllocation>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// Result of removing an owned Blooio number.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RemovedBlooioNumber {
+    pub phone_number: Option<String>,
+    pub channel_id: Option<String>,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }

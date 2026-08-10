@@ -58,6 +58,25 @@ fn parses_messaging_safety_events_forward_compatibly() {
 }
 
 #[test]
+fn parses_number_lifecycle_events_forward_compatibly() {
+    let completed = br#"{"id":"evt_purchase_1","type":"number.purchase.completed","occurred_at":1700000002,"data":{"purchase_id":"purchase_1","status":"completed","phone_numbers":["+15551234567"],"channel_ids":["ch_1"]}}"#;
+    let event = blooio::v4::webhook::WebhookEvent::parse(completed).unwrap();
+    assert_eq!(event.event_type, "number.purchase.completed");
+    assert_eq!(
+        event.data.get("purchase_id"),
+        Some(&serde_json::json!("purchase_1"))
+    );
+
+    let removed = br#"{"id":"evt_removed_1","type":"number.removed","occurred_at":1700000003,"data":{"phone_number":"+15551234567","channel_id":"ch_1","binding_id":"binding_1","reasons":["no_longer_needed"]}}"#;
+    let event = blooio::v4::webhook::WebhookEvent::parse(removed).unwrap();
+    assert_eq!(event.event_type, "number.removed");
+    assert_eq!(
+        event.data.get("reasons"),
+        Some(&serde_json::json!(["no_longer_needed"]))
+    );
+}
+
+#[test]
 fn shared_signature_verification_accepts_authentic_body() {
     let body = br#"{"id":"evt_1","type":"poll.voted","occurred_at":1700000000,"data":{}}"#;
     let header = sign(1_700_000_000, body);

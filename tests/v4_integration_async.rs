@@ -8,11 +8,16 @@
     clippy::print_stdout
 )]
 
+use blooio::v4::resources::channels::{
+    ListAvailableBlooioNumbers, PurchaseBlooioNumbers, RemoveBlooioNumber,
+};
 use blooio::v4::resources::chats::{CreateChat, SendPoll, VotePoll};
 use blooio::v4::resources::contacts::UpdateContact;
 use blooio::v4::resources::groups::UpdateGroup;
 use blooio::v4::resources::messages::SendMessage;
-use blooio::v4::types::{MessageContentFields, MessageSendResult, Recipient};
+use blooio::v4::types::{
+    BlooioNumberType, BlooioPurchaseStatus, MessageContentFields, MessageSendResult, Recipient,
+};
 use blooio::v4::{Client, DEFAULT_BASE_URL};
 use blooio::{BlooioCreds, ClientConfig};
 use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
@@ -82,6 +87,55 @@ async fn cursor_paginator_uses_opaque_next_cursor() {
         .await
         .unwrap();
     assert_eq!(events.len(), 2);
+}
+
+#[tokio::test]
+async fn available_number_paginator_uses_next_cursor_and_preserves_filters() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/channels/blooio/available"))
+        .and(query_param("type", "dedicated"))
+        .and(query_param("area_code", "415"))
+        .and(query_param("limit", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [{"phone_number": "+14155550100"}],
+            "has_more": true,
+            "next_cursor": "available-next"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/channels/blooio/available"))
+        .and(query_param("type", "dedicated"))
+        .and(query_param("area_code", "415"))
+        .and(query_param("limit", "50"))
+        .and(query_param("cursor", "available-next"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [{"phone_number": "+14155550101"}],
+            "has_more": false,
+            "next_cursor": null
+        })))
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::from_config(ClientConfig::new().with_base_url(server.uri())).unwrap();
+    let creds = BlooioCreds::new("test-key");
+    let numbers = client
+        .account(&creds)
+        .channels()
+        .available_all(ListAvailableBlooioNumbers {
+            number_type: Some(BlooioNumberType::Dedicated),
+            area_codes: vec!["415".into()],
+            ..Default::default()
+        })
+        .collect_all()
+        .await
+        .unwrap();
+
+    assert_eq!(numbers.len(), 2);
 }
 
 #[tokio::test]
@@ -186,6 +240,102 @@ async fn global_send_uses_typed_body_and_idempotency_header() {
         panic!("expected a single-message response");
     };
     assert_eq!(sent.id.as_deref(), Some("msg_1"));
+}
+
+#[tokio::test]
+async fn blooio_number_lifecycle_uses_typed_mirrored_operations() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/channels/blooio/available"))
+        .and(query_param("type", "dedicated"))
+        .and(query_param("area_code", "415"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": [{"phone_number": "+14155550100"}],
+            "matched_count": 1,
+            "custom_order_count": 0,
+            "has_more": false,
+            "next_cursor": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/channels/blooio/purchases"))
+        .and(header("idempotency-key", "purchase-test-1"))
+        .and(body_json(serde_json::json!({
+            "plan": "dedicated",
+            "quantity": 1,
+            "area_codes": ["415"]
+        })))
+        .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+            "data": {"purchase_id": "purchase_1", "status": "provisioning"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/channels/blooio/purchases/purchase_1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "purchase_id": "purchase_1",
+                "status": "completed",
+                "allocations": [{"phone_number": "+14155550100", "channel_id": "ch_1"}]
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/channels/%2B14155550100"))
+        .and(body_json(
+            serde_json::json!({"reasons": ["no_longer_needed"]}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "data": {
+                "phone_number": "+14155550100",
+                "channel_id": "ch_1",
+                "reasons": ["no_longer_needed"]
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let client = Client::from_config(ClientConfig::new().with_base_url(server.uri())).unwrap();
+    let creds = BlooioCreds::new("test-key");
+    let channels = client.account(&creds).channels();
+
+    let available = channels
+        .available(ListAvailableBlooioNumbers {
+            number_type: Some(BlooioNumberType::Dedicated),
+            area_codes: vec!["415".into()],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(available.matched_count, Some(1));
+
+    let mut purchase = PurchaseBlooioNumbers::new("dedicated", "purchase-test-1");
+    purchase.quantity = Some(1);
+    purchase.area_codes = vec!["415".into()];
+    let accepted = channels.purchase(purchase).await.unwrap();
+    assert_eq!(
+        accepted.data.status,
+        Some(BlooioPurchaseStatus::Provisioning)
+    );
+
+    let completed = channels.purchase_status("purchase_1").await.unwrap();
+    assert_eq!(completed.data.status, Some(BlooioPurchaseStatus::Completed));
+    assert_eq!(completed.data.allocations.len(), 1);
+
+    let removed = channels
+        .remove(RemoveBlooioNumber::new(
+            "+14155550100",
+            ["no_longer_needed"],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(removed.data.channel_id.as_deref(), Some("ch_1"));
 }
 
 #[tokio::test]

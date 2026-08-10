@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refresh the pinned v4 OpenAPI snapshot to 82 callable operations. Add typed,
+  mirrored async/blocking Blooio number inventory, purchase, purchase-status,
+  and removal APIs; expose message attachment and interactive response data;
+  align webhook ownership scopes and retired event-filter semantics; and add
+  stable number-purchase error codes.
 - Refresh the pinned v4 OpenAPI snapshot and document the new messaging-safety
   webhook events and send-time safety/conversation-limit errors. Expose their
   stable error codes and avoid retrying conversation-state `429` responses.
