@@ -1,5 +1,5 @@
 use super::ChannelType;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -14,9 +14,26 @@ pub struct Channel {
     pub alias: Option<String>,
     pub status: Option<String>,
     pub capabilities: Option<ChannelCapabilities>,
+    pub profile: Option<ChannelProfile>,
     pub created_at: Option<i64>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// Stored profile metadata for a channel.
+///
+/// `None` omits a field; `Some(None)` clears it when used in an update.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ChannelProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<Option<String>>,
 }
 
 /// A v4 routing priority.
@@ -114,12 +131,64 @@ impl<'de> Deserialize<'de> for BlooioNumberType {
     }
 }
 
-/// One provider-defined available Blooio number or area-code quote item.
+/// One available Blooio number inventory row or area-code quote line.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AvailableBlooioNumber {
+    /// An inventory row with a masked number.
+    Inventory(AvailableBlooioInventory),
+    /// An area-code quote line.
+    Quote(AvailableBlooioQuote),
+}
+
+/// A masked row from the available Blooio number inventory.
 #[allow(missing_docs)]
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct AvailableBlooioNumber {
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct AvailableBlooioInventory {
+    pub masked_national: Option<String>,
+    pub area_code: Option<String>,
+    pub country_code: Option<String>,
+    pub phone_number_country: Option<String>,
+    pub location: Option<String>,
     #[serde(flatten)]
-    pub fields: BTreeMap<String, Value>,
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// An area-code availability quote line.
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct AvailableBlooioQuote {
+    pub area_code: Option<String>,
+    pub matched: Option<bool>,
+    pub custom_order: Option<bool>,
+    pub auto_assigned: Option<bool>,
+    pub zip_code: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl<'de> Deserialize<'de> for AvailableBlooioNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("available number item must be an object"))?;
+        let is_quote = ["matched", "custom_order", "auto_assigned", "zip_code"]
+            .iter()
+            .any(|key| object.contains_key(*key));
+
+        if is_quote {
+            serde_json::from_value(value)
+                .map(Self::Quote)
+                .map_err(D::Error::custom)
+        } else {
+            serde_json::from_value(value)
+                .map(Self::Inventory)
+                .map_err(D::Error::custom)
+        }
+    }
 }
 
 /// Available Blooio number inventory or area-code quote response.

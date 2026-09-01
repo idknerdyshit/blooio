@@ -59,12 +59,16 @@ fn parses_messaging_safety_events_forward_compatibly() {
 
 #[test]
 fn parses_number_lifecycle_events_forward_compatibly() {
-    let completed = br#"{"id":"evt_purchase_1","type":"number.purchase.completed","occurred_at":1700000002,"data":{"purchase_id":"purchase_1","status":"completed","phone_numbers":["+15551234567"],"channel_ids":["ch_1"]}}"#;
+    let completed = br#"{"id":"evt_purchase_1","type":"number.purchase.completed","occurred_at":1700000002,"data":{"purchase_id":"purchase_1","status":"completed","lines":[{"phone_number":"+15551234567","channel_id":"ch_1"}],"phone_numbers":["+15551234567"],"channel_ids":["ch_1"]}}"#;
     let event = blooio::v4::webhook::WebhookEvent::parse(completed).unwrap();
     assert_eq!(event.event_type, "number.purchase.completed");
     assert_eq!(
         event.data.get("purchase_id"),
         Some(&serde_json::json!("purchase_1"))
+    );
+    assert_eq!(
+        event.data["lines"][0]["channel_id"],
+        serde_json::json!("ch_1")
     );
 
     let removed = br#"{"id":"evt_removed_1","type":"number.removed","occurred_at":1700000003,"data":{"phone_number":"+15551234567","channel_id":"ch_1","binding_id":"binding_1","reasons":["no_longer_needed"]}}"#;
@@ -73,6 +77,18 @@ fn parses_number_lifecycle_events_forward_compatibly() {
     assert_eq!(
         event.data.get("reasons"),
         Some(&serde_json::json!(["no_longer_needed"]))
+    );
+}
+
+#[test]
+fn parses_reactions_with_multipart_attachment_context() {
+    let reaction = br#"{"id":"evt_reaction_1","type":"message.reaction","occurred_at":1700000004,"data":{"reaction":"love","action":"add","message_id":"msg_1","original_text":"Photos","part_index":3,"attachments":[{"index":3,"url":"https://example.com/fourth.jpg","media_type":"image/jpeg","size":12,"caption":"Fourth"}],"reacted_attachment":{"index":3,"url":"https://example.com/fourth.jpg","media_type":"image/jpeg","size":12,"caption":"Fourth"}}}"#;
+    let event = blooio::v4::webhook::WebhookEvent::parse(reaction).unwrap();
+    assert_eq!(event.event_type, "message.reaction");
+    assert_eq!(event.data["part_index"], 3);
+    assert_eq!(
+        event.data["reacted_attachment"]["url"],
+        "https://example.com/fourth.jpg"
     );
 }
 

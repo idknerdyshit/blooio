@@ -98,7 +98,13 @@ async fn available_number_paginator_uses_next_cursor_and_preserves_filters() {
         .and(query_param("area_code", "415"))
         .and(query_param("limit", "50"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "data": [{"phone_number": "+14155550100"}],
+            "data": [{
+                "masked_national": "(415) ***-****",
+                "area_code": "415",
+                "country_code": "1",
+                "phone_number_country": "US",
+                "location": "San Francisco, CA"
+            }],
             "has_more": true,
             "next_cursor": "available-next"
         })))
@@ -112,7 +118,13 @@ async fn available_number_paginator_uses_next_cursor_and_preserves_filters() {
         .and(query_param("limit", "50"))
         .and(query_param("cursor", "available-next"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "data": [{"phone_number": "+14155550101"}],
+            "data": [{
+                "masked_national": "(415) ***-****",
+                "area_code": "415",
+                "country_code": "1",
+                "phone_number_country": "US",
+                "location": "San Francisco, CA"
+            }],
             "has_more": false,
             "next_cursor": null
         })))
@@ -250,7 +262,13 @@ async fn blooio_number_lifecycle_uses_typed_mirrored_operations() {
         .and(query_param("type", "dedicated"))
         .and(query_param("area_code", "415"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "data": [{"phone_number": "+14155550100"}],
+            "data": [{
+                "masked_national": "(415) ***-****",
+                "area_code": "415",
+                "country_code": "1",
+                "phone_number_country": "US",
+                "location": "San Francisco, CA"
+            }],
             "matched_count": 1,
             "custom_order_count": 0,
             "has_more": false,

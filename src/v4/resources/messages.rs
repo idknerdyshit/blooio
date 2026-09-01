@@ -322,7 +322,9 @@ impl<'a> crate::v4::resources::chats::ChatHandle<crate::v4::BlockingBlooioAccoun
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::v4::types::{LinkPreview, MultipartPart, TemplateFields};
+    use crate::v4::types::{
+        AppClipFields, IMessageAppFields, LinkPreview, MessageBadge, MultipartPart, TemplateFields,
+    };
     use serde_json::json;
 
     #[test]
@@ -350,6 +352,57 @@ mod tests {
         assert_eq!(
             body,
             json!({"rich_link": {"url": "https://example.com", "title": "Example"}})
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_app_clip_and_controls() {
+        let body = MessageContentFields::app_clip(
+            AppClipFields::bundle_id("com.example.app.Clip").title("Example"),
+        )
+        .badge(MessageBadge::SentWithSiri)
+        .carousel(false);
+        let body = serde_json::to_value(body).unwrap();
+        assert_eq!(
+            body,
+            json!({
+                "app_clip": {
+                    "bundle_id": "com.example.app.Clip",
+                    "title": "Example"
+                },
+                "badge": "sent_with_siri",
+                "carousel": false
+            })
+        );
+    }
+
+    #[test]
+    fn message_content_fields_serializes_imessage_app() {
+        let body = MessageContentFields::imessage_app(
+            IMessageAppFields::new(
+                "com.example.app.MessagesExtension",
+                "TEAM123",
+                "https://example.com/state/42",
+            )
+            .app_name("Example")
+            .caption("Open Example")
+            .subcaption("Tap to continue")
+            .image_url("https://example.com/thumb.png"),
+        );
+        let body = serde_json::to_value(body).unwrap();
+        assert_eq!(
+            body,
+            json!({
+                "imessage_app": {
+                    "bundle_id": "com.example.app.MessagesExtension",
+                    "team_id": "TEAM123",
+                    "url": "https://example.com/state/42",
+                    "app_name": "Example",
+                    "caption": "Open Example",
+                    "subcaption": "Tap to continue",
+                    "image_url": "https://example.com/thumb.png"
+                }
+            })
         );
     }
 

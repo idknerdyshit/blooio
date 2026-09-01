@@ -6,8 +6,8 @@ use crate::v4::{
     CursorPaginator,
     types::{
         AvailableBlooioNumbers, BlooioNumberType, BlooioPurchase, Channel, ChannelCapabilities,
-        ChannelType, ItemEnvelope, ListEnvelope, MessageContentFields, MessageSendResult,
-        RemovedBlooioNumber,
+        ChannelProfile, ChannelType, ItemEnvelope, ListEnvelope, MessageContentFields,
+        MessageSendResult, RemovedBlooioNumber,
     },
 };
 use crate::{
@@ -15,7 +15,6 @@ use crate::{
     core::operation::{encode_path_segment, json_body, push_opt},
 };
 use http::Method;
-use serde_json::Value;
 
 /// List channels with cursor pagination.
 #[derive(Debug, Clone, Default)]
@@ -209,7 +208,7 @@ impl_v4_operation!(RemoveBlooioNumber);
 #[derive(Debug, Clone)]
 pub struct UpdateChannelProfile {
     pub channel_id: String,
-    pub fields: Value,
+    pub fields: ChannelProfile,
 }
 impl crate::Operation for UpdateChannelProfile {
     type Output = ItemEnvelope<Channel>;
@@ -429,6 +428,19 @@ impl<'a> Channels<crate::v4::BlooioAccount<'a>> {
     ) -> Result<ItemEnvelope<RemovedBlooioNumber>> {
         self.client.send(operation).await
     }
+    /// Partially update profile metadata for a channel.
+    pub async fn update_profile(
+        &self,
+        channel_id: impl Into<String>,
+        fields: ChannelProfile,
+    ) -> Result<ItemEnvelope<Channel>> {
+        self.client
+            .send(UpdateChannelProfile {
+                channel_id: channel_id.into(),
+                fields,
+            })
+            .await
+    }
     /// Cursor over all channels.
     pub fn list_all(
         &self,
@@ -502,6 +514,17 @@ impl<'a> Channels<crate::v4::BlockingBlooioAccount<'a>> {
         operation: RemoveBlooioNumber,
     ) -> Result<ItemEnvelope<RemovedBlooioNumber>> {
         self.client.send(operation)
+    }
+    /// Partially update profile metadata for a channel.
+    pub fn update_profile(
+        &self,
+        channel_id: impl Into<String>,
+        fields: ChannelProfile,
+    ) -> Result<ItemEnvelope<Channel>> {
+        self.client.send(UpdateChannelProfile {
+            channel_id: channel_id.into(),
+            fields,
+        })
     }
     /// Cursor over all channels.
     pub fn list_all(

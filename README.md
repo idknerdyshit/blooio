@@ -81,7 +81,14 @@ offset-based search. The v4 webhook envelope is available when both `api-v4`
 and `webhooks` are enabled and reuses the root signature verifier. The channel
 resource also exposes Blooio number inventory, idempotent number purchases,
 purchase-status polling, and number removal. Purchases are asynchronous and
-billable, so callers must supply a stable unique idempotency key.
+billable, so callers must supply a stable unique idempotency key. Available
+inventory and area-code quotes decode into distinct typed response variants.
+
+V4 message content includes typed helpers for App Clip bubbles and custom
+iMessage app-extension bubbles. Blooio iMessage media can opt into Siri
+or FaceTime attribution and can explicitly enable or disable photo/video
+carousel grouping with `MessageContentFields::badge` and
+`MessageContentFields::carousel`.
 
 ## Quick start (async)
 

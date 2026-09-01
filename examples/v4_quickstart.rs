@@ -3,7 +3,7 @@
 use blooio::BlooioCreds;
 use blooio::v4::Client;
 use blooio::v4::resources::messages::SendMessage;
-use blooio::v4::types::{MessageContentFields, Recipient};
+use blooio::v4::types::{AppClipFields, MessageBadge, MessageContentFields, Recipient};
 
 #[tokio::main]
 async fn main() -> blooio::Result<()> {
@@ -16,8 +16,12 @@ async fn main() -> blooio::Result<()> {
         .messages()
         .send(SendMessage::new(
             Recipient::identifier("+15551234567"),
-            MessageContentFields::text("hello from v4"),
+            MessageContentFields::text("hello from v4").badge(MessageBadge::SentWithSiri),
         ))
         .await?;
+
+    let _app_clip = MessageContentFields::app_clip(
+        AppClipFields::bundle_id("com.example.app.Clip").title("Example"),
+    );
     Ok(())
 }

@@ -35,6 +35,88 @@ fn channel_types_match_the_schema_and_preserve_unknown_values() {
 }
 
 #[test]
+fn available_number_rows_distinguish_inventory_from_quotes() {
+    let response: AvailableBlooioNumbers = serde_json::from_value(json!({
+        "data": [
+            {
+                "masked_national": "(801) ***-****",
+                "area_code": "801",
+                "country_code": "1",
+                "phone_number_country": "US",
+                "location": "Salt Lake City, UT"
+            },
+            {
+                "area_code": "212",
+                "matched": false,
+                "custom_order": true,
+                "future_quote_field": "preserved"
+            }
+        ],
+        "matched_count": 0,
+        "custom_order_count": 1,
+        "has_more": false,
+        "next_cursor": null
+    }))
+    .unwrap();
+
+    let [
+        AvailableBlooioNumber::Inventory(inventory),
+        AvailableBlooioNumber::Quote(quote),
+    ] = response.data.as_slice()
+    else {
+        panic!("expected one inventory row and one quote line");
+    };
+    assert_eq!(inventory.masked_national.as_deref(), Some("(801) ***-****"));
+    assert_eq!(inventory.location.as_deref(), Some("Salt Lake City, UT"));
+    assert_eq!(quote.area_code.as_deref(), Some("212"));
+    assert_eq!(quote.matched, Some(false));
+    assert_eq!(quote.custom_order, Some(true));
+    assert_eq!(quote.extra["future_quote_field"], "preserved");
+}
+
+#[test]
+fn message_badges_are_forward_compatible_and_serialize_on_content() {
+    let known: MessageBadge = serde_json::from_value(json!("sent_with_facetime")).unwrap();
+    assert_eq!(known, MessageBadge::SentWithFaceTime);
+    assert_eq!(serde_json::to_value(&known).unwrap(), "sent_with_facetime");
+
+    let unknown: MessageBadge = serde_json::from_value(json!("future_badge")).unwrap();
+    assert_eq!(unknown, MessageBadge::Unknown("future_badge".into()));
+    assert_eq!(
+        serde_json::to_value(MessageContentFields::text("hello").badge(unknown)).unwrap(),
+        json!({"text": "hello", "badge": "future_badge"})
+    );
+}
+
+#[test]
+fn message_format_and_formatted_text_match_the_schema() {
+    let content = MessageContentFields::text("**hello**").format(MessageFormat::Markdown);
+    assert_eq!(
+        serde_json::to_value(content).unwrap(),
+        json!({"text": "**hello**", "format": "markdown"})
+    );
+
+    let message: Message = serde_json::from_value(json!({
+        "text": "hello", "formatted_text": "**hello**"
+    }))
+    .unwrap();
+    assert_eq!(message.formatted_text.as_deref(), Some("**hello**"));
+}
+
+#[test]
+fn channel_profile_preserves_omission_and_clearing() {
+    let profile = ChannelProfile {
+        display_name: Some(Some("Blooio Support".into())),
+        about: Some(None),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(profile).unwrap(),
+        json!({"display_name": "Blooio Support", "about": null})
+    );
+}
+
+#[test]
 fn webhook_scope_is_forward_compatible_and_api_key_is_redacted() {
     let webhook: Webhook = serde_json::from_value(json!({
         "id": "wh_1",

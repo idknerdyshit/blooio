@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Update the v4 snapshot for typed number-inventory and area-code quote rows,
+  and replace the obsolete `sent_from_siri` message flag with forward-compatible
+  Siri and FaceTime badges.
+- Refresh the pinned v4 OpenAPI snapshot with typed App Clip and custom
+  iMessage app-extension content, Siri/FaceTime attribution and media-carousel controls,
+  and enriched multipart reaction and number-purchase webhook payloads.
 - Refresh the pinned v4 OpenAPI snapshot to 82 callable operations. Add typed,
   mirrored async/blocking Blooio number inventory, purchase, purchase-status,
   and removal APIs; expose message attachment and interactive response data;

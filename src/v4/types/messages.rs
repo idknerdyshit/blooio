@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use super::ChannelType;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -15,12 +15,227 @@ pub struct LinkPreview {
 }
 
 /// One ordered part in multipart message content.
+///
+/// When two or more parts are image/video URLs, Blooio iMessage sends them as a
+/// carousel by default. Use [`MessageContentFields::carousel`] to control that
+/// behavior.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct MultipartPart {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+}
+
+/// Optional attribution badge shown under a Blooio iMessage bubble.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MessageBadge {
+    /// Show "Sent with Siri".
+    SentWithSiri,
+    /// Show "Sent with `FaceTime`".
+    SentWithFaceTime,
+    /// Preserve a badge value added by a future API revision.
+    Unknown(String),
+}
+
+impl MessageBadge {
+    pub(crate) fn wire_value(&self) -> &str {
+        match self {
+            Self::SentWithSiri => "sent_with_siri",
+            Self::SentWithFaceTime => "sent_with_facetime",
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
+impl Serialize for MessageBadge {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.wire_value())
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageBadge {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "sent_with_siri" => Self::SentWithSiri,
+            "sent_with_facetime" => Self::SentWithFaceTime,
+            _ => Self::Unknown(value),
+        })
+    }
+}
+
+/// Fields for an App Clip bubble.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AppClipFields {
+    /// App Clip launch URL; mutually exclusive with [`Self::bundle_id`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// App Clip bundle identifier used to build Apple's canonical launch URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    /// Optional preview title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+impl AppClipFields {
+    /// Build App Clip content from a launch URL.
+    #[must_use]
+    pub fn url(value: impl Into<String>) -> Self {
+        Self {
+            url: Some(value.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Build App Clip content from a bundle identifier.
+    #[must_use]
+    pub fn bundle_id(value: impl Into<String>) -> Self {
+        Self {
+            bundle_id: Some(value.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Set the optional App Clip preview title.
+    #[must_use]
+    pub fn title(mut self, value: impl Into<String>) -> Self {
+        self.title = Some(value.into());
+        self
+    }
+}
+
+/// Fields for a custom iMessage app-extension bubble.
+#[derive(Debug, Clone, Serialize)]
+pub struct IMessageAppFields {
+    /// Your iMessage app extension's bundle identifier.
+    pub bundle_id: String,
+    /// Your Apple Developer Team ID.
+    pub team_id: String,
+    /// App-state URL consumed by the extension on tap.
+    pub url: String,
+    /// Display name shown for the app.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    /// Fallback template-card caption.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
+    /// Optional fallback template-card subcaption.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subcaption: Option<String>,
+    /// Optional fallback template-card thumbnail URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    /// Optional App Store Adam ID for the extension fallback.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_store_id: Option<u64>,
+}
+
+impl IMessageAppFields {
+    /// Build an iMessage app-extension bubble.
+    #[must_use]
+    pub fn new(
+        bundle_id: impl Into<String>,
+        team_id: impl Into<String>,
+        url: impl Into<String>,
+    ) -> Self {
+        Self {
+            bundle_id: bundle_id.into(),
+            team_id: team_id.into(),
+            url: url.into(),
+            app_name: None,
+            caption: None,
+            subcaption: None,
+            image_url: None,
+            app_store_id: None,
+        }
+    }
+
+    /// Set the display name shown for the app.
+    #[must_use]
+    pub fn app_name(mut self, value: impl Into<String>) -> Self {
+        self.app_name = Some(value.into());
+        self
+    }
+
+    /// Set the fallback template-card caption.
+    #[must_use]
+    pub fn caption(mut self, value: impl Into<String>) -> Self {
+        self.caption = Some(value.into());
+        self
+    }
+
+    /// Set the fallback template-card subcaption.
+    #[must_use]
+    pub fn subcaption(mut self, value: impl Into<String>) -> Self {
+        self.subcaption = Some(value.into());
+        self
+    }
+
+    /// Set the fallback template-card thumbnail URL.
+    #[must_use]
+    pub fn image_url(mut self, value: impl Into<String>) -> Self {
+        self.image_url = Some(value.into());
+        self
+    }
+
+    /// Set the App Store Adam ID used by the extension fallback.
+    #[must_use]
+    pub fn app_store_id(mut self, value: u64) -> Self {
+        self.app_store_id = Some(value);
+        self
+    }
+}
+
+/// How a sent text field is interpreted.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MessageFormat {
+    /// Send text literally.
+    Plain,
+    /// Parse the supported iMessage Markdown styling.
+    Markdown,
+    /// Preserve a future provider-defined format.
+    Unknown(String),
+}
+
+impl MessageFormat {
+    pub(crate) fn wire_value(&self) -> &str {
+        match self {
+            Self::Plain => "plain",
+            Self::Markdown => "markdown",
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
+impl Serialize for MessageFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.wire_value())
+    }
+}
+
+impl<'de> Deserialize<'de> for MessageFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "plain" => Self::Plain,
+            "markdown" => Self::Markdown,
+            _ => Self::Unknown(value),
+        })
+    }
 }
 
 /// A v4 message.
@@ -36,6 +251,7 @@ pub struct Message {
     #[serde(rename = "type")]
     pub content_type: Option<String>,
     pub text: Option<String>,
+    pub formatted_text: Option<String>,
     pub status: Option<String>,
     pub provider_message_id: Option<String>,
     pub reply_to_message_id: Option<String>,
@@ -234,11 +450,17 @@ pub struct MessageContentFields {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<MessageFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parts: Option<Vec<MultipartPart>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rich_link: Option<RichLinkFields>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_clip: Option<AppClipFields>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imessage_app: Option<IMessageAppFields>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll: Option<super::PollContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -251,6 +473,10 @@ pub struct MessageContentFields {
     pub effect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_preview: Option<LinkPreview>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub badge: Option<MessageBadge>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carousel: Option<bool>,
 }
 
 impl MessageContentFields {
@@ -261,6 +487,13 @@ impl MessageContentFields {
             text: Some(value.into()),
             ..Default::default()
         }
+    }
+
+    /// Set how the message text and multipart text parts are interpreted.
+    #[must_use]
+    pub fn format(mut self, value: MessageFormat) -> Self {
+        self.format = Some(value);
+        self
     }
 
     /// Build media content from public URLs.
@@ -287,6 +520,24 @@ impl MessageContentFields {
                 url: url.into(),
                 title: Some(title.into()),
             }),
+            ..Default::default()
+        }
+    }
+
+    /// Build an App Clip bubble.
+    #[must_use]
+    pub fn app_clip(fields: AppClipFields) -> Self {
+        Self {
+            app_clip: Some(fields),
+            ..Default::default()
+        }
+    }
+
+    /// Build a custom iMessage app-extension bubble.
+    #[must_use]
+    pub fn imessage_app(fields: IMessageAppFields) -> Self {
+        Self {
+            imessage_app: Some(fields),
             ..Default::default()
         }
     }
@@ -345,6 +596,20 @@ impl MessageContentFields {
             }),
             ..Default::default()
         }
+    }
+
+    /// Set an attribution badge on Blooio iMessage channels.
+    #[must_use]
+    pub fn badge(mut self, value: MessageBadge) -> Self {
+        self.badge = Some(value);
+        self
+    }
+
+    /// Enable or disable Blooio iMessage media carousel grouping.
+    #[must_use]
+    pub fn carousel(mut self, value: bool) -> Self {
+        self.carousel = Some(value);
+        self
     }
 }
 
